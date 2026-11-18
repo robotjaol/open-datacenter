@@ -18,7 +18,7 @@ from .site import rank
 from .assets import equipment_rows, telemetry_rows
 
 def write_json(path: Path, obj):
-    path.write_text(json.dumps(obj, indent=2, allow_nan=False)+"\n", encoding="utf-8")
+    path.write_text(json.dumps(obj, indent=2, allow_nan=False)+"\n", encoding="utf-8", newline="\n")
 
 def write_csv(path: Path, rows: list[dict]):
     if not rows:

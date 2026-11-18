@@ -328,7 +328,7 @@ def docs_index(root: Path) -> list[dict]:
 
 
 def write_json(path: Path, obj):
-    path.write_text(json.dumps(obj, separators=(",", ":"), allow_nan=False) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(obj, separators=(",", ":"), allow_nan=False) + "\n", encoding="utf-8", newline="\n")
 
 
 def export(payload: dict, out: Path, root: Path) -> dict:

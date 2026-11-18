@@ -69,7 +69,7 @@ def write_geometry(c: dict, out: Path) -> list[dict]:
         svg.append(rect(rack["x"], rack["y"], rack["width"], rack["depth"], "#0f766e", "#115e59"))
     svg.extend(['<text x="45" y="777" font-family="Arial" font-size="14" fill="#102a43">A/B power routes, egress, fire compartments and structure require detailed coordination.</text>',
                 '<text x="45" y="802" font-family="Arial" font-size="14" fill="#486581">Plant rooms and external yards are defined in the accommodation schedule; not placed in this drawing.</text>', '</svg>'])
-    (out/"hall-layout.svg").write_text("\n".join(svg), encoding="utf-8")
+    (out/"hall-layout.svg").write_text("\n".join(svg), encoding="utf-8", newline="\n")
     dxf = ["0", "SECTION", "2", "HEADER", "9", "$INSUNITS", "70", "6", "0", "ENDSEC", "0", "SECTION", "2", "ENTITIES"]
     for item in rooms+racks:
         x, y, w, d = item["x"], item["y"], item["width"], item["depth"]
@@ -78,7 +78,7 @@ def write_geometry(c: dict, out: Path) -> list[dict]:
             dxf += ["0", "LINE", "8", "RACKS" if "asset_id" in item else "HALLS",
                     "10", str(a[0]), "20", str(a[1]), "30", "0", "11", str(b[0]), "21", str(b[1]), "31", "0"]
     dxf += ["0", "ENDSEC", "0", "EOF"]
-    (out/"hall-layout.dxf").write_text("\n".join(dxf)+"\n", encoding="ascii")
+    (out/"hall-layout.dxf").write_text("\n".join(dxf)+"\n", encoding="ascii", newline="\n")
     usd = ['#usda 1.0', '(', '    defaultPrim = "Facility"', '    metersPerUnit = 1', '    upAxis = "Z"', ')', 'def Xform "Facility"', '{']
     for rack in racks:
         name = rack["asset_id"].replace("-", "_")
@@ -88,5 +88,5 @@ def write_geometry(c: dict, out: Path) -> list[dict]:
                 '        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]',
                 f'        custom string assetId = "{rack["asset_id"]}"', f'        custom double designKw = {rack["design_kw"]}', '    }']
     usd += ['}']
-    (out/"facility-massing.usda").write_text("\n".join(usd)+"\n", encoding="utf-8")
+    (out/"facility-massing.usda").write_text("\n".join(usd)+"\n", encoding="utf-8", newline="\n")
     return racks
