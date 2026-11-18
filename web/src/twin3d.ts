@@ -1,6 +1,14 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { Equipment, Twin } from "./types";
+import { buildRack } from "./models/rack";
+import { buildPlant } from "./models/plant";
+import { availableModels, loadExternal } from "./models/external";
+import { RACK_SIZE } from "./models/rack";
+
+interface RackSet { ids: string[]; center: THREE.Vector3; simple: THREE.InstancedMesh; body: THREE.InstancedMesh; accent: THREE.InstancedMesh }
+const DETAIL_DISTANCE = 70;
 
 export type ColorMode = "hall" | "telemetry" | "neutral";
 export interface Layers { halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
@@ -31,9 +39,10 @@ export class TwinScene {
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls;
   private center = new THREE.Vector3();
-  private racksMesh: THREE.InstancedMesh;
-  private rackIds: string[];
-  private rackIndex = new Map<string, number>();
+  private rackSets: RackSet[] = [];
+  private rackLoc = new Map<string, { set: RackSet; idx: number }>();
+  private racksVisible = true;
+  private pmrem: THREE.PMREMGenerator;
   private rackBase: THREE.Color[] = [];
   private equipMeshes = new Map<string, THREE.Mesh>();
   private hallFloors = new Map<string, THREE.Mesh>();
@@ -54,33 +63,26 @@ export class TwinScene {
   constructor(private canvas: HTMLCanvasElement, private twin: Twin) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.0;
+    this.pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = this.pmrem.fromScene(new RoomEnvironment(), 0.04).texture; this.scene.environmentIntensity = 0.55;
     this.scene.background = new THREE.Color(0x0a0d11);
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.5, 600);
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true; this.controls.dampingFactor = 0.08;
-    this.controls.maxPolarAngle = Math.PI / 2 - 0.03; this.controls.minDistance = 6; this.controls.maxDistance = 220;
+    this.controls.maxPolarAngle = Math.PI / 2 - 0.03; this.controls.minDistance = 1.2; this.controls.maxDistance = 220;
     // framing
     const xs = [...twin.halls.map((h) => h.x), ...twin.halls.map((h) => h.x + h.width), ...twin.equipment.map((e) => e.display_position.x + e.display_position.width)];
     const ys = [...twin.halls.map((h) => h.y), ...twin.halls.map((h) => h.y + h.depth), ...twin.equipment.map((e) => e.display_position.y + e.display_position.depth)];
     this.center.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...ys) + Math.max(...ys)) / 2);
-    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x1a222c, 1.15));
+    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x1a222c, 0.6));
     const sun = new THREE.DirectionalLight(0xffffff, 1.3); sun.position.set(40, 70, 30); this.scene.add(sun);
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshBasicMaterial({ color: 0x0d1117 }));
     ground.rotation.x = -Math.PI / 2; ground.position.set(this.center.x, -0.02, this.center.z); this.scene.add(ground);
     const grid = new THREE.GridHelper(200, 40, 0x26303b, 0x171d25); grid.position.set(this.center.x, 0, this.center.z); this.scene.add(grid);
     this.scene.add(this.hallGroup, this.labelGroup, this.lines);
     this.buildHalls();
-    const n = twin.racks.length;
-    this.rackIds = twin.racks.map((r) => r.asset_id);
-    this.racksMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.2 }), n);
-    const m = new THREE.Matrix4();
-    twin.racks.forEach((r, i) => {
-      m.compose(new THREE.Vector3(r.x + r.width / 2, r.height / 2, r.y + r.depth / 2), new THREE.Quaternion(), new THREE.Vector3(r.width * 0.96, r.height, r.depth * 0.96));
-      this.racksMesh.setMatrixAt(i, m);
-      this.rackIndex.set(r.asset_id, i);
-    });
-    this.racksMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
-    this.scene.add(this.racksMesh);
+    this.buildRacks();
     this.buildEquipment();
     this.setColorMode("hall");
     this.resize = new ResizeObserver(() => this.fit());
@@ -92,12 +94,27 @@ export class TwinScene {
     this.fit();
     this.flyTo("overview", true);
     this.loop();
+    void this.applyExternalModels();
+  }
+
+  // raised floor: 600 mm tile grid drawn into a repeating texture
+  private tileMaterials(w: number, d: number): THREE.Material[] {
+    const c = document.createElement("canvas"); c.width = c.height = 128;
+    const g = c.getContext("2d")!;
+    g.fillStyle = "#1b242e"; g.fillRect(0, 0, 128, 128);
+    g.strokeStyle = "#0e141a"; g.lineWidth = 3; g.strokeRect(0, 0, 128, 128);
+    g.fillStyle = "#222c37"; for (const [x, y] of [[10, 10], [118, 10], [10, 118], [118, 118]]) g.fillRect(x - 2, y - 2, 4, 4);
+    const tex = new THREE.CanvasTexture(c); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(w / 0.6, d / 0.6);
+    tex.anisotropy = 8; tex.colorSpace = THREE.SRGBColorSpace;
+    const side = new THREE.MeshStandardMaterial({ color: 0x18212b, roughness: 0.9 });
+    const top = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75, metalness: 0.1 });
+    return [side, side, top, side, side, side];
   }
 
   private buildHalls() {
     for (const [i, hall] of this.twin.halls.entries()) {
       const color = HALL_COLOR[i % HALL_COLOR.length];
-      const floor = new THREE.Mesh(new THREE.BoxGeometry(hall.width, 0.2, hall.depth), new THREE.MeshStandardMaterial({ color: 0x18212b, roughness: 0.9 }));
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(hall.width, 0.2, hall.depth), this.tileMaterials(hall.width, hall.depth));
       floor.position.set(hall.x + hall.width / 2, 0.1, hall.y + hall.depth / 2);
       floor.userData = { kind: "hall", id: hall.id };
       this.hallFloors.set(hall.id, floor);
@@ -117,11 +134,65 @@ export class TwinScene {
     }
   }
 
+  private buildRacks() {
+    const geo = buildRack();
+    const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0.55 });
+    const accentMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const simpleMat = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.2 });
+    const m = new THREE.Matrix4();
+    for (const hall of this.twin.halls) {
+      const racks = this.twin.racks.filter((r) => r.hall_id === hall.id);
+      const n = racks.length;
+      const mk = (g: THREE.BufferGeometry, mat: THREE.Material) => {
+        const im = new THREE.InstancedMesh(g, mat, n);
+        im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
+        return im;
+      };
+      const set: RackSet = { ids: racks.map((r) => r.asset_id), center: new THREE.Vector3(hall.x + hall.width / 2, 1, hall.y + hall.depth / 2),
+        simple: mk(geo.simple, simpleMat), body: mk(geo.body, bodyMat), accent: mk(geo.accent, accentMat) };
+      racks.forEach((r, i) => {
+        m.makeTranslation(r.x + r.width / 2, 0, r.y + r.depth / 2);
+        set.simple.setMatrixAt(i, m); set.body.setMatrixAt(i, m); set.accent.setMatrixAt(i, m);
+        this.rackLoc.set(r.asset_id, { set, idx: i });
+      });
+      for (const im of [set.simple, set.body, set.accent]) { im.computeBoundingSphere(); im.frustumCulled = true; }
+      set.body.visible = false; set.accent.visible = false;
+      this.scene.add(set.simple, set.body, set.accent);
+      this.rackSets.push(set);
+    }
+  }
+
+  // optional local GLB files replace the generic models when present
+  private async applyExternalModels() {
+    const have = await availableModels();
+    if (!have.size) return;
+    if (have.has("rack")) {
+      const rack = await loadExternal("rack", { w: RACK_SIZE.w, d: RACK_SIZE.d, h: RACK_SIZE.h, origin: "floor" });
+      if (rack && !this.disposed) for (const st of this.rackSets) { st.body.geometry = rack; st.accent.count = 0; }
+    }
+    const names: Record<string, string> = { UPS: "ups", TX: "tx", GEN: "gen", CHL: "chl", CDU: "cdu" };
+    for (const [id, mesh] of this.equipMeshes) {
+      const e = this.twin.equipment.find((x) => x.asset_id === id)!, p = e.display_position, name = names[e.system];
+      if (!name || !have.has(name)) continue;
+      const g = await loadExternal(name, { w: p.width, d: p.depth, h: p.height, origin: "center" });
+      if (g && !this.disposed) { mesh.geometry = g; const mat = mesh.material as THREE.MeshStandardMaterial; mat.vertexColors = true; mat.needsUpdate = true; }
+    }
+  }
+
+  // swap between the box stand-in and the full rack model by distance
+  private updateLod() {
+    for (const s of this.rackSets) {
+      const near = this.camera.position.distanceTo(s.center) < DETAIL_DISTANCE;
+      s.body.visible = this.racksVisible && near; s.accent.visible = this.racksVisible && near; s.simple.visible = this.racksVisible && !near;
+    }
+  }
+
   private buildEquipment() {
     for (const e of this.twin.equipment) {
       const p = e.display_position;
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(p.width, p.height, p.depth),
-        new THREE.MeshStandardMaterial({ color: SYSTEM_COLOR[e.system] ?? 0x888888, roughness: 0.5, metalness: 0.25, emissive: 0x000000 }));
+      const geo = buildPlant(e.system, { w: p.width, d: p.depth, h: p.height }, SYSTEM_COLOR[e.system] ?? 0x888888)
+        ?? new THREE.BoxGeometry(p.width, p.height, p.depth);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: geo.hasAttribute("color"), color: 0xffffff, roughness: 0.5, metalness: 0.4 }));
       mesh.position.set(p.x + p.width / 2, p.height / 2, p.y + p.depth / 2);
       mesh.userData = { kind: "equipment", id: e.asset_id, system: e.system };
       this.equipMeshes.set(e.asset_id, mesh);
@@ -138,7 +209,8 @@ export class TwinScene {
 
   setLayers(l: Layers) {
     this.hallGroup.visible = l.halls;
-    this.racksMesh.visible = l.racks;
+    this.racksVisible = l.racks;
+    this.updateLod();
     this.labelGroup.visible = l.labels;
     this.lines.visible = l.relations;
     for (const [id, mesh] of this.equipMeshes) {
@@ -192,25 +264,26 @@ export class TwinScene {
   private paint() {
     const rel = this.related(this.selected);
     const any = this.selected !== null;
-    const c = new THREE.Color();
+    const c = new THREE.Color(), body = new THREE.Color();
     this.twin.racks.forEach((r, i) => {
-      c.copy(this.rackBase[i]);
+      c.copy(this.rackBase[i]); body.setRGB(1, 1, 1);
       if (any) {
-        if (rel.racks.has(r.asset_id)) { if (this.selected!.id === r.asset_id) c.set(0xffffff); else c.lerp(new THREE.Color(0xffffff), 0.35); }
-        else c.multiplyScalar(0.28);
+        if (rel.racks.has(r.asset_id)) { if (this.selected!.id === r.asset_id) { c.set(0xffffff); body.setRGB(1.6, 1.6, 1.6); } else c.lerp(new THREE.Color(0xffffff), 0.35); }
+        else { c.multiplyScalar(0.28); body.setRGB(0.3, 0.3, 0.3); }
       }
-      this.racksMesh.setColorAt(i, c);
+      const loc = this.rackLoc.get(r.asset_id)!;
+      loc.set.simple.setColorAt(loc.idx, c); loc.set.accent.setColorAt(loc.idx, c); loc.set.body.setColorAt(loc.idx, body);
     });
-    this.racksMesh.instanceColor!.needsUpdate = true;
+    for (const st of this.rackSets) for (const im of [st.simple, st.accent, st.body]) im.instanceColor!.needsUpdate = true;
     for (const [id, mesh] of this.equipMeshes) {
       const mat = mesh.material as THREE.MeshStandardMaterial;
       const on = rel.equipment.has(id);
-      mat.emissive.setHex(on ? (this.selected?.id === id ? 0xffffff : mat.color.getHex()) : 0x000000);
-      mat.emissiveIntensity = on ? (this.selected?.id === id ? 0.7 : 0.45) : 0;
+      mat.emissive.setHex(on ? (this.selected?.id === id ? 0xffffff : (SYSTEM_COLOR[mesh.userData.system as string] ?? 0x888888)) : 0x000000);
+      mat.emissiveIntensity = on ? (this.selected?.id === id ? 0.16 : 0.1) : 0;
       mat.opacity = any && !on ? 0.35 : 1; mat.transparent = any && !on;
     }
     for (const [id, floor] of this.hallFloors) {
-      (floor.material as THREE.MeshStandardMaterial).emissive.setHex(rel.halls.has(id) && any ? 0x0b3a4d : 0x000000);
+      for (const mt of floor.material as THREE.MeshStandardMaterial[]) mt.emissive.setHex(rel.halls.has(id) && any ? 0x0b3a4d : 0x000000);
     }
     this.drawRelations(rel);
   }
@@ -242,11 +315,19 @@ export class TwinScene {
 
   focusOn(p: Picked) {
     const c = new THREE.Vector3();
-    let dist: number;
-    if (p.kind === "rack") { const r = this.twin.racks.find((x) => x.asset_id === p.id)!; c.set(r.x, 1, r.y); dist = 14; }
-    else if (p.kind === "hall") { const h = this.twin.halls.find((x) => x.id === p.id)!; c.set(h.x + h.width / 2, 2, h.y + h.depth / 2); dist = 34; }
-    else { const m = this.equipMeshes.get(p.id)!; c.copy(m.position); dist = 18; }
-    this.moveTo(c, c.clone().add(new THREE.Vector3(dist * 0.55, dist * 0.7, dist * 0.75)));
+    let off: THREE.Vector3;
+    if (p.kind === "rack") {
+      const r = this.twin.racks.find((x) => x.asset_id === p.id)!;
+      c.set(r.x + r.width / 2, 1.2, r.y + r.depth / 2); off = new THREE.Vector3(0.35, 0.15, 1.65);       // inside the 1.8 m cold aisle, facing the front
+    } else if (p.kind === "hall") {
+      const h = this.twin.halls.find((x) => x.id === p.id)!;
+      c.set(h.x + h.width / 2, 2, h.y + h.depth / 2); off = new THREE.Vector3(18, 26, 32);
+    } else {
+      const m = this.equipMeshes.get(p.id)!, size = new THREE.Vector3();
+      new THREE.Box3().setFromObject(m).getSize(size);
+      c.copy(m.position); const k = Math.max(size.x, size.z) * 0.9 + 3; off = new THREE.Vector3(k * 0.6, k * 0.45, k);
+    }
+    this.moveTo(c, c.clone().add(off));
   }
 
   flyTo(zone: string, instant = false) {
@@ -274,7 +355,7 @@ export class TwinScene {
   screenOf(id: string): { x: number; y: number } | null {
     const v = new THREE.Vector3();
     const rack = this.twin.racks.find((r) => r.asset_id === id);
-    if (rack) v.set(rack.x + rack.width / 2, rack.height, rack.y + rack.depth / 2);
+    if (rack) v.set(rack.x + rack.width / 2, rack.height - 0.15, rack.y + rack.depth / 2);
     else { const m = this.equipMeshes.get(id); if (!m) return null; v.copy(m.position); v.y *= 2; }
     v.project(this.camera);
     const rect = this.canvas.getBoundingClientRect();
@@ -286,12 +367,13 @@ export class TwinScene {
     this.ray.set(((clientX - rect.left) / rect.width) * 2 - 1, -(((clientY - rect.top) / rect.height) * 2 - 1));
     this.raycaster.setFromCamera(this.ray, this.camera);
     const targets: THREE.Object3D[] = [];
-    if (this.racksMesh.visible) targets.push(this.racksMesh);
+    for (const st of this.rackSets) for (const im of [st.simple, st.body]) if (im.visible) targets.push(im);
     for (const m of this.equipMeshes.values()) if (m.visible) targets.push(m);
     if (this.hallGroup.visible) for (const f of this.hallFloors.values()) targets.push(f);
     const hit = this.raycaster.intersectObjects(targets, false)[0];
     if (!hit) return null;
-    if (hit.object === this.racksMesh) return { kind: "rack", id: this.rackIds[hit.instanceId!] };
+    const set = this.rackSets.find((st) => st.simple === hit.object || st.body === hit.object);
+    if (set) return { kind: "rack", id: set.ids[hit.instanceId!] };
     return { kind: hit.object.userData.kind, id: hit.object.userData.id };
   }
 
@@ -324,6 +406,7 @@ export class TwinScene {
       if (k >= 1) this.anim = null;
     }
     this.controls.update();
+    this.updateLod();
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -338,6 +421,7 @@ export class TwinScene {
       const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
       if (Array.isArray(mat)) mat.forEach((m) => m.dispose()); else mat?.dispose?.();
     });
+    this.pmrem.dispose();
     this.renderer.dispose();
   }
 }

@@ -16,3 +16,5 @@ Dense racks scenario does not change CAPEX,dcf/finance.py,base_capex_usd is a fi
 Plant positions are schematic,dcf/webdata.py plant_positions,source geometry places racks only,design decision; stated in the UI and docs/digital-twin
 Page has no horizontal overflow at 7 widths,web/src/style.css,scrollWidth <= clientWidth on 10 routes,verified by headless Chrome sweep (docs/validation/final-acceptance-report.md)
 Remote CI passes,.github/workflows/ci.yml,not run,not verified
+3D models fit their display footprints,web/src/models/rack.ts and plant.ts,bounding boxes within footprint plus tolerance,verified by web/tests/models.test.ts
+NVIDIA DSX sample data is not for production use,https://catalog.ngc.nvidia.com/orgs/nvidia/omniverse/resources/dsx_dataset/-,licence stated on the NGC page (NVIDIA Sample Data License for Evaluation),read from the source on 2026-11-18; no assets copied into this repository

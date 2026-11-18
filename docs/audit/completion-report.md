@@ -7,7 +7,7 @@ Branch `feature/interactive-data-center-digital-twin`. Evidence is in [validatio
 - Repository audit (this folder) and a claim to evidence table.
 - Python data contract, scenario runner and local API, with 31 new tests (45 total).
 - Web interface with ten modules, a 3D facility view and an equipment inspector keyed by asset ID.
-- 22 frontend tests, strict typecheck, lint, production build, and a `web` job in CI.
+- 32 frontend tests, strict typecheck, lint, production build, and a `web` job in CI.
 - Documentation set under `docs/`, a redesigned README and real screenshots from the running app.
 
 ## Not done or not verified

@@ -82,6 +82,12 @@ configs/*.json -> dcf (Python) -> artifacts/reference (SHA-256) -> dcf.webdata -
 
 Details and the contract: [docs/architecture/data-flow.md](docs/architecture/data-flow.md).
 
+### 7a. 3D models
+
+The 3D view uses original procedural models, not scans and not vendor files. A rack is a 42U, 600 by 1200 mm class cabinet with 19 inch rails, 2U and 4U servers with drive bays and vents, switches, patch panel, A and B PDUs with outlets, and a supply and return liquid manifold. About 4,400 triangles each; 200 racks at full detail is about 0.9 million triangles, and halls farther than 70 m show a box stand-in. Plant: UPS cabinet, oil filled transformer with bushings and radiator fins, enclosed generator with silencer and radiator, air cooled chiller with V coils and fans, and a CDU with manifolds. All carry the label "generic". Dimensions follow the display footprint in the data contract.
+
+NVIDIA SimReady and DSX assets are **not included**. The DSX sample data is licensed for evaluation only and is not for production use, so it must not be committed to this MIT repository. To use your own GLB files, put `rack.glb`, `ups.glb`, `tx.glb`, `gen.glb`, `chl.glb` or `cdu.glb` in `web/public/models/` (git ignored). They replace the generic models when the server finds them. Only geometry and base colours are used; convert OpenUSD to GLB yourself and check each asset licence.
+
 ## 8. Data provenance
 
 Four classes: design, modeled, simulated, financial. Every value carries a synthetic flag. Chips show provenance with shape and text. Telemetry shows value, timestamp, source, quality and a synthetic flag.
@@ -93,7 +99,7 @@ Four classes: design, modeled, simulated, financial. Every value carries a synth
 | Python unit tests | 45 passed |
 | `scripts/verify_repository.py` | PASS |
 | TypeScript strict, ESLint | 0 errors |
-| Frontend tests | 22 passed |
+| Frontend tests | 32 passed |
 | Production build | exit 0 |
 | Browser sweep, 10 routes, no console errors | passed |
 | Horizontal overflow, 7 widths by 10 routes | 0 |
@@ -103,6 +109,7 @@ Not yet verified: remote GitHub Actions, real GPU, screen readers, Firefox and S
 ## 10. Limitations
 
 - Plant positions in 3D are schematic; only racks come from source geometry.
+- Equipment shapes are generic models built from common public dimensions, not vendor or NVIDIA assets (see section 7a).
 - OpenUSD and DXF are rack massing, not facility BIM.
 - Scenario CAPEX is fixed; PV scenarios carry no PV investment.
 - The scenario module needs the local Python server.

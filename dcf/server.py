@@ -65,6 +65,11 @@ def make_server(host: str, port: int, config_path: Path, sites_path: Path,
             if path == "/api/scenario/parameters":
                 return self.send_json(200, {"parameters": scenario.parameter_table(base),
                                             "baseline_config": base})
+            if path == "/api/models":
+                # optional local GLB files; names only, never paths
+                folder = web_dir / "models"
+                names = sorted(f.stem for f in folder.glob("*.glb")) if folder.is_dir() else []
+                return self.send_json(200, {"models": names})
             if path.startswith("/api/"):
                 return self.send_json(404, {"error": "unknown API route"})
             if path.startswith("/data/"):
