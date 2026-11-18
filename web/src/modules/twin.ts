@@ -4,6 +4,7 @@ import type { Equipment, Hall, ModuleView, Rack } from "../types";
 import type { ColorMode, Layers, Picked, TwinScene } from "../twin3d";
 import { fmtLength } from "../units";
 import { RACK_UNIT_LIST } from "../models/rack-units";
+import { extremeHour, flowSpeeds, SPEED_CHOICES, snapshot } from "../sim";
 import { chip, fixed, group, h } from "../util";
 
 const SYSTEM_NAME: Record<string, string> = { UPS: "Uninterruptible power supply", TX: "Transformer", GEN: "Generator", CHL: "Chiller", CDU: "Coolant distribution unit" };
@@ -16,7 +17,7 @@ function row(dl: HTMLElement, term: string, value: Node | string | null, missing
 export function twinModule(ctx: Ctx): ModuleView {
   const data = activeData(ctx.store);
   const twin = data.twin;
-  const layers: Layers = { leds: true, aisles: true, halls: true, racks: true, electrical: true, cooling: true, relations: true, labels: true };
+  const layers: Layers = { flows: false, leds: true, aisles: true, halls: true, racks: true, electrical: true, cooling: true, relations: true, labels: true };
   let mode: ColorMode = "hall";
   let zone = "overview";
   const canvas = h("canvas", { "aria-label": "Interactive 3D model of the data center halls, racks and plant. Use the asset list or search for keyboard access.", tabindex: "0" }) as HTMLCanvasElement;
@@ -117,8 +118,11 @@ export function twinModule(ctx: Ctx): ModuleView {
     const items = [["overview", "Facility overview"], ...twin.halls.map((x) => [x.id, `Hall ${x.id}`]), ["plant", "Plant yard"]];
     zones.replaceChildren(...items.map(([id, name]) => h("button", { class: "list-btn", type: "button", "aria-pressed": String(zone === id), onClick: () => { zone = id; scene?.flyTo(id); drawZones(); if (id.startsWith("H")) pick({ kind: "hall", id }); else if (selected) pick(null); } }, name)));
   }
+  const layerInputs: Partial<Record<keyof Layers, HTMLInputElement>> = {};
   function layerBox(key: keyof Layers, text: string) {
-    return h("label", { class: "check" }, h("input", { type: "checkbox", checked: layers[key] ? "" : undefined, onChange: (e: Event) => { layers[key] = (e.target as HTMLInputElement).checked; scene?.setLayers(layers); } }), text);
+    const input = h("input", { type: "checkbox", checked: layers[key] ? "" : undefined, onChange: (e: Event) => { layers[key] = (e.target as HTMLInputElement).checked; scene?.setLayers(layers); } }) as HTMLInputElement;
+    layerInputs[key] = input;
+    return h("label", { class: "check" }, input, text);
   }
   function setMode(m: ColorMode) { mode = m; scene?.setColorMode(m); legend(); modeBar.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === m))); }
   function legend() {
@@ -150,6 +154,50 @@ export function twinModule(ctx: Ctx): ModuleView {
     h("div", { class: "seg fill", role: "group", "aria-label": "Standard views" }, ...([["plan", "Plan"], ["front", "Front"], ["side", "Side"], ["iso", "Iso"]] as const).map(([v, t]) => h("button", { type: "button", onClick: () => scene?.setView(v) }, t))),
     projBtn, secSelect, secSlider, measBtn, cadReadout, explodeBtn,
     h("label", { class: "check" }, h("input", { type: "checkbox", onChange: (e: Event) => { dims = (e.target as HTMLInputElement).checked; refreshDims(); } }), "Dimension box of selection"), dimReadout));
+  // ---- end-to-end simulation over the synthetic hourly table ----
+  const hourly = data.hourly;
+  const maxes = { itKw: Math.max(...(hourly.columns.it_kw ?? [0])), coolingKwth: Math.max(...(hourly.columns.cooling_kwth ?? [0])) };
+  let simHour = extremeHour(hourly, "it_kw", "max"), simPlaying = false, simLast = 0, simShown = 0, simSpeed = SPEED_CHOICES[1][1], simRaf = 0;
+  const simChips: Record<string, HTMLElement> = {};
+  const chipDefs: [string, string][] = [["ambient", "Ambient"], ["it", "IT load"], ["facility", "Facility"], ["pue", "PUE (instant)"], ["cooling", "Cooling load"], ["cop", "Chiller COP"], ["grid", "Grid import"], ["pv", "PV used"]];
+  for (const [k] of chipDefs) simChips[k] = h("b", {}, "-");
+  const simDate = h("span", { class: "sim-date" }, "");
+  const simSlider = h("input", { type: "range", min: "0", max: String(hourly.hours - 1), step: "1", value: String(simHour), "aria-label": "Hour of the synthetic year", onInput: (e: Event) => { simHour = Number((e.target as HTMLInputElement).value); applySim(true); } }) as HTMLInputElement;
+  function applySim(force = false) {
+    const s = snapshot(hourly, simHour), now = performance.now();
+    scene?.setSimulation({ playing: simPlaying, ...flowSpeeds(s, maxes), activity: 0.6 + 0.8 * s.load });
+    if (!force && now - simShown < 160) return;
+    simShown = now;
+    simDate.textContent = s.label; simSlider.value = String(s.hour); simSlider.setAttribute("aria-valuetext", s.label);
+    simChips.ambient.textContent = `${fixed(s.ambientC, 1)} C`; simChips.it.textContent = `${group(s.itKw, 0)} kW`; simChips.facility.textContent = `${group(s.facilityKw, 0)} kW`;
+    simChips.pue.textContent = fixed(s.pue, 3); simChips.cooling.textContent = `${group(s.coolingKwth, 0)} kWth`; simChips.cop.textContent = fixed(s.cop, 2);
+    simChips.grid.textContent = `${group(s.gridKw, 0)} kW`; simChips.pv.textContent = `${group(s.pvUsedKw, 0)} kW`;
+  }
+  function simTick(t: number) {
+    if (!simPlaying || gone) return;
+    const dt = Math.min(0.25, (t - simLast) / 1000); simLast = t;
+    simHour = (simHour + dt * simSpeed) % hourly.hours; applySim();
+    simRaf = requestAnimationFrame(simTick);
+  }
+  function setPlaying(on: boolean) {
+    simPlaying = on; playBtn.setAttribute("aria-pressed", String(on)); playBtn.textContent = on ? "Pause" : "Run simulation";
+    if (on) { if (!layers.flows) { layers.flows = true; if (layerInputs.flows) layerInputs.flows.checked = true; scene?.setLayers(layers); } simLast = performance.now(); simRaf = requestAnimationFrame(simTick); }
+    else cancelAnimationFrame(simRaf);
+    applySim(true);
+  }
+  const playBtn = h("button", { class: "btn", type: "button", "aria-pressed": "false", onClick: () => setPlaying(!simPlaying) }, "Run simulation");
+  const speedSel = h("select", { "aria-label": "Simulation speed", onChange: (e: Event) => { simSpeed = Number((e.target as HTMLSelectElement).value); } },
+    ...SPEED_CHOICES.map(([t, v]) => h("option", { value: String(v), selected: v === simSpeed ? "" : undefined }, t))) as HTMLSelectElement;
+  const jump = (text: string, col: string, kind: "max" | "min") => h("button", { class: "btn", type: "button", onClick: () => { simHour = extremeHour(hourly, col, kind); applySim(true); } }, text);
+  const simPanel = h("details", { class: "twin-sim" }, h("summary", {}, "End-to-end simulation (synthetic hourly data)"),
+    h("div", { class: "sim-body" },
+      h("div", { class: "sim-row" }, playBtn, speedSel, simDate),
+      simSlider,
+      h("div", { class: "sim-row" }, jump("Peak IT hour", "it_kw", "max"), jump("Hottest hour", "ambient_c", "max"), jump("Coolest hour", "ambient_c", "min")),
+      h("div", { class: "sim-chips" }, ...chipDefs.map(([k, t]) => h("div", { class: "sim-chip" }, h("span", {}, t), simChips[k]))),
+      h("div", { class: "sim-key" }, h("span", {}, h("i", { style: "background:#ff6b5a" }), "Power A"), h("span", {}, h("i", { style: "background:#5aa9ff" }), "Power B"), h("span", {}, h("i", { style: "background:#38e0f8" }), "Chilled water and CDU supply"), h("span", {}, h("i", { style: "background:#ffb347" }), "Return"),
+        h("span", {}, "Generators stand by"), h("span", {}, "Synthetic data. Particle speed is illustrative. Routes are schematic."))));
+  applySim(true);
   const search = h("input", { type: "search", list: "asset-list", placeholder: "Asset ID, e.g. H02-R017", "aria-label": "Find asset by ID", style: "width:100%",
     onChange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim().toUpperCase(); const r = twin.racks.find((x) => x.asset_id === v); const q = twin.equipment.find((x) => x.asset_id === v);
       if (r) pick({ kind: "rack", id: r.asset_id }, true); else if (q) pick({ kind: "equipment", id: q.asset_id }, true); } });
@@ -158,7 +206,7 @@ export function twinModule(ctx: Ctx): ModuleView {
   const stage = h("div", { class: "twin-stage" }, canvas,
     h("div", { class: "twin-hud" }, h("button", { class: "btn", type: "button", onClick: () => { scene?.flyTo("overview"); zone = "overview"; drawZones(); } }, "Reset camera"), modeBar,
       h("button", { class: "btn", type: "button", onClick: () => pick(null) }, "Clear selection")),
-    h("div", { class: "twin-foot" }, h("span", {}, "Drag orbit. Scroll zoom. Right-drag pan. Click to inspect."), h("span", {}, "Plant positions are schematic. LED rate follows synthetic telemetry.")), hoverTip);
+    h("div", { class: "twin-foot" }, h("span", {}, "Drag orbit. Scroll zoom. Right-drag pan. Click to inspect."), h("span", {}, "Plant positions are schematic. LED rate follows synthetic telemetry.")), hoverTip, simPanel);
   const el = h("div", { class: "stack" },
     h("div", { class: "page-head" }, h("p", { class: "pattern" }, "Split pane"), h("h1", {}, "Facility Digital Twin"),
       h("p", {}, "Browser view of the rack layout from the Python geometry module, linked to equipment records by asset ID. Telemetry is a synthetic offline example, not a live feed. The source OpenUSD is rack-only massing, not a facility BIM model.")),
@@ -166,7 +214,7 @@ export function twinModule(ctx: Ctx): ModuleView {
       h("div", { class: "side left" },
         h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Zones")), h("div", { class: "panel-body", style: "padding:8px" }, zones)),
         h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Layers")), h("div", { class: "panel-body", style: "padding:8px" },
-          layerBox("racks", "Racks"), layerBox("halls", "Hall shells"), layerBox("aisles", "Aisle containment"), layerBox("leds", "Rack LEDs"), layerBox("electrical", "Electrical plant"), layerBox("cooling", "Cooling plant"), layerBox("relations", "Relationship lines"), layerBox("labels", "Labels"), colorLegend)),
+          layerBox("racks", "Racks"), layerBox("halls", "Hall shells"), layerBox("aisles", "Aisle containment"), layerBox("leds", "Rack LEDs"), layerBox("flows", "Energy flows"), layerBox("electrical", "Electrical plant"), layerBox("cooling", "Cooling plant"), layerBox("relations", "Relationship lines"), layerBox("labels", "Labels"), colorLegend)),
         h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Find asset")), h("div", { class: "panel-body" }, search, datalist,
           h("div", { class: "tags" }, ...["UPS-A-01", "GEN-B-01", "CHL-SHARED-01", "CDU-H01-01"].map((id) => h("button", { class: "tag", type: "button", onClick: () => pick({ kind: "equipment", id }, true) }, id)))))),
       stage,
@@ -191,10 +239,11 @@ export function twinModule(ctx: Ctx): ModuleView {
     legend();
     (window as any).__twin = { select: (id: string) => { const r = twin.racks.find((x) => x.asset_id === id); pick(r ? { kind: "rack", id } : { kind: "equipment", id }, true); },
       screenOf: (id: string) => scene!.screenOf(id), selected: () => selected, flyTo: (z: string) => scene!.flyTo(z, true), setMode, layers: (l: Partial<Layers>) => { Object.assign(layers, l); scene!.setLayers(layers); },
+      sim: { play: (on: boolean) => setPlaying(on), hour: (n: number) => { simHour = n; applySim(true); }, count: () => scene!.flowCount },
       stats: () => ({ frames: scene!.renderedFrames, calls: scene!.renderer.info.render.calls, triangles: scene!.renderer.info.render.triangles }),
       cad: { setView: (v: any) => scene!.setView(v), ortho: (o: boolean) => scene!.setProjection(o), section: (a: any, o: number) => scene!.setSection(a, o), dims: (on: boolean) => scene!.showDimensions(on), measure: (on: boolean) => scene!.setMeasure(on) },
       look: (p: number[], t: number[]) => { scene!.camera.position.set(p[0], p[1], p[2]); scene!.controls.target.set(t[0], t[1], t[2]); scene!.controls.update(); scene!.invalidate(); } };
-    dispose = () => { gone = true; scene?.dispose(); delete (window as any).__twin; };
+    dispose = () => { gone = true; cancelAnimationFrame(simRaf); scene?.dispose(); delete (window as any).__twin; };
   });
   return { el, dispose: () => dispose?.() };
 }

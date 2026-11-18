@@ -5,6 +5,7 @@ import type { Equipment, Rack, Twin } from "./types";
 import { buildRack, buildRackParts, FRONT_Z, RACK_UNIT_LIST, unitAtHeight } from "./models/rack";
 import { buildContainment } from "./models/containment";
 import { ledGeometry, ledMaterial } from "./leds";
+import { buildRoutes, FlowLayer } from "./flows";
 import { fmtLength, measure, Measurement, ORTHO_FOV, orthoScale, PERSPECTIVE_FOV, sectionPlane, SectionAxis, ViewName, VIEW_DIRECTION } from "./cad";
 import { buildTray } from "./models/tray";
 import { buildPlant } from "./models/plant";
@@ -17,7 +18,7 @@ const DETAIL_DISTANCE = 35;   // full detail inside this distance
 const MID_DISTANCE = 70;      // medium detail up to here, then a plain block
 
 export type ColorMode = "hall" | "telemetry" | "neutral";
-export interface Layers { leds: boolean; aisles: boolean; halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
+export interface Layers { flows: boolean; leds: boolean; aisles: boolean; halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
 export interface Picked { kind: "rack" | "equipment" | "hall"; id: string; unit?: number }
 
 const SYSTEM_COLOR: Record<string, number> = { UPS: 0x7c9cff, TX: 0xf2b84b, GEN: 0xe8829f, CHL: 0x38bdf8, CDU: 0x6fcf97 };
@@ -67,6 +68,9 @@ export class TwinScene {
   private ledMat = ledMaterial(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   private ledsOn = true;
   private layerAisles = true;
+  private flows!: FlowLayer;
+  private sim = { playing: false, power: 2, cooling: 1.4 };
+  private lastFlow = performance.now();
   private ledPhase = 0;
   private lastTick = performance.now();
   activity = 1;            // global load factor for LED rate, set by the simulation
@@ -87,6 +91,11 @@ export class TwinScene {
   private unitMarker = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.38, depthTest: false }));
   private exploded: { id: string; group: THREE.Group; parts: { mesh: THREE.Mesh; dir: THREE.Vector3; unit?: number }[]; k: number; to: number; t0: number; from: number; settled?: boolean; hidden: { im: THREE.InstancedMesh; idx: number }[] } | null = null;
   get isExploded() { return this.exploded !== null && this.exploded.to === 1; }
+  // end-to-end simulation: speeds are visual, proportional to the hourly load
+  setSimulation(s: { playing: boolean; power: number; cooling: number; activity: number }) {
+    this.sim = { playing: s.playing, power: s.power, cooling: s.cooling }; this.activity = s.activity; this.dirty = true;
+  }
+  get flowCount() { return this.flows.count; }
   // CAD state
   private ortho = false;
   private lodScale = 1;
@@ -133,6 +142,7 @@ export class TwinScene {
     this.buildTrays();
     this.buildAisles();
     this.buildEquipment();
+    this.flows = new FlowLayer(buildRoutes(twin)); this.scene.add(this.flows.object);
     this.setColorMode("hall");
     this.resize = new ResizeObserver(() => this.fit());
     this.resize.observe(canvas.parentElement!);
@@ -319,7 +329,7 @@ export class TwinScene {
 
   setLayers(l: Layers) {
     this.hallGroup.visible = l.halls;
-    this.layerAisles = l.aisles; this.aisleGroup.visible = l.aisles && !this.exploded; this.ledsOn = l.leds; this.racksVisible = l.racks; this.trays.visible = l.racks; this.dirty = true; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
+    this.flows.object.visible = l.flows; this.layerAisles = l.aisles; this.aisleGroup.visible = l.aisles && !this.exploded; this.ledsOn = l.leds; this.racksVisible = l.racks; this.trays.visible = l.racks; this.dirty = true; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
     this.updateLod();
     this.labelGroup.visible = l.labels;
     this.lines.visible = l.relations;
@@ -681,6 +691,11 @@ export class TwinScene {
     }
     if (this.anim) this.dirty = true;
     this.stepExplode();
+    const tf = performance.now(), df = tf - this.lastFlow;
+    if (df >= 33) {
+      this.lastFlow = tf;
+      if (this.flows.object.visible && this.sim.playing && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) { this.flows.update(Math.min(df, 100) / 1000, this.sim.power, this.sim.cooling); this.dirty = true; }
+    }
     const now = performance.now(), dt = now - this.lastTick;
     if (dt >= 50 && this.ledMat.uniforms.uCalm.value === 0 && this.rackSets.some((r) => r.led.visible)) {
       this.lastTick = now; this.ledPhase += (dt / 1000) * this.activity;
@@ -705,6 +720,7 @@ export class TwinScene {
       const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
       if (Array.isArray(mat)) mat.forEach((m) => m.dispose()); else mat?.dispose?.();
     });
+    this.flows.dispose();
     this.pmrem.dispose();
     this.renderer.dispose();
   }

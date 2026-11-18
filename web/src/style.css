@@ -169,6 +169,19 @@ label { font-size: var(--text-sec); color: var(--muted); }
 .twin-hud { position: absolute; left: var(--s3); top: var(--s3); display: flex; gap: var(--s2); flex-wrap: wrap; right: var(--s3); pointer-events: none; }
 .twin-hud > * { pointer-events: auto; }
 .twin-foot { position: absolute; left: var(--s3); bottom: var(--s3); right: var(--s3); display: flex; justify-content: space-between; gap: var(--s3); pointer-events: none; color: var(--muted); font-size: var(--text-meta); }
+.twin-sim { position: absolute; left: var(--s3); right: var(--s3); bottom: 56px; background: rgba(13,17,23,0.92); border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: var(--text-sec); }
+.twin-sim > summary { min-height: 44px; display: flex; align-items: center; padding: 0 var(--s3); cursor: pointer; font-weight: var(--w-med); }
+.twin-sim .sim-body { display: grid; gap: var(--s2); padding: 0 var(--s3) var(--s3); max-height: 46vh; overflow-y: auto; }
+.twin-sim .sim-row { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.twin-sim .sim-date { font-variant-numeric: tabular-nums; color: var(--text); }
+.twin-sim input[type="range"] { width: 100%; accent-color: var(--accent); }
+.sim-chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); }
+@media (max-width: 560px) { .sim-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.sim-chip { border: 1px solid var(--line); border-radius: var(--radius); padding: 2px 8px; background: var(--l1); min-width: 0; }
+.sim-chip span { display: block; color: var(--muted); font-size: var(--text-meta); }
+.sim-chip b { font-weight: var(--w-med); font-variant-numeric: tabular-nums; }
+.sim-key { display: flex; flex-wrap: wrap; gap: var(--s3); color: var(--muted); font-size: var(--text-meta); }
+.sim-key i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .twin-foot span { background: rgba(10,13,17,0.8); padding: 4px 8px; border-radius: var(--radius); border: 1px solid var(--line); }
 .side { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
 .check { display: flex; align-items: center; gap: var(--s3); min-height: 44px; padding: 0 var(--s2); cursor: pointer; color: var(--text); font-size: var(--text-sec); }
