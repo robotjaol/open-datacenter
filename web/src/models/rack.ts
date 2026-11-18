@@ -15,10 +15,10 @@ const STACK: Unit[] = [
 ];
 export const RACK_UNITS = STACK.reduce((a, s) => a + s.u, 0);
 
-export interface RackGeometry { body: THREE.BufferGeometry; mid: THREE.BufferGeometry; accent: THREE.BufferGeometry; simple: THREE.BufferGeometry }
+export interface RackGeometry { body: THREE.BufferGeometry; mid: THREE.BufferGeometry; led: THREE.BufferGeometry; accent: THREE.BufferGeometry; simple: THREE.BufferGeometry }
 
 export function buildRack(): RackGeometry {
-  const k = new Kit(), a = new Kit();
+  const k = new Kit(), a = new Kit(), l = new Kit();
   const fz = D / 2 - 0.1;                 // front mounting plane
   // plinth and feet
   k.box(0, 0.04, 0, W, 0.08, D, PAINT.darkSteel);
@@ -55,7 +55,7 @@ export function buildRack(): RackGeometry {
       const bays = s.kind === "srv4" ? 8 : 4;
       for (let i = 0; i < bays; i++) k.box(-0.205 + i * 0.0245, y, fz + 0.058, 0.02, h * 0.6, 0.006, 0x262d34);
     }
-    a.box(0.2, y + h * 0.28, fz + 0.059, 0.012, 0.007, 0.004, 0xffffff);                                // status LED
+    l.box(0.2, y + h * 0.28, fz + 0.059, 0.012, 0.007, 0.004, 0xffffff);                                // status LED
   }
   // vertical PDUs at the rear with outlets, and power feeds
   for (const [i, sx] of [-1, 1].entries()) {
@@ -94,6 +94,6 @@ export function buildRack(): RackGeometry {
   }
   for (const sx of [-1, 1]) m.box(sx * 0.255, 1.05, -D / 2 + 0.12, 0.05, 1.7, 0.05, 0x181c20);
   for (const [i, x] of [-0.1, 0.1].entries()) m.cyl(x, 1.1, -D / 2 + 0.2, 0.022, 1.8, "y", i === 0 ? PAINT.blue : PAINT.red, 8);
-  return { body: k.build(), mid: m.build(), accent: a.build(), simple: s.build() };
+  return { body: k.build(), mid: m.build(), led: l.build(), accent: a.build(), simple: s.build() };
 }
 export const RACK_SIZE = { w: W, d: D, h: 2.2 };

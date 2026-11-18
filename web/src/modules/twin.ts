@@ -14,7 +14,7 @@ function row(dl: HTMLElement, term: string, value: Node | string | null, missing
 export function twinModule(ctx: Ctx): ModuleView {
   const data = activeData(ctx.store);
   const twin = data.twin;
-  const layers: Layers = { aisles: true, halls: true, racks: true, electrical: true, cooling: true, relations: true, labels: true };
+  const layers: Layers = { leds: true, aisles: true, halls: true, racks: true, electrical: true, cooling: true, relations: true, labels: true };
   let mode: ColorMode = "hall";
   let zone = "overview";
   const canvas = h("canvas", { "aria-label": "Interactive 3D model of the data center halls, racks and plant. Use the asset list or search for keyboard access.", tabindex: "0" }) as HTMLCanvasElement;
@@ -115,7 +115,7 @@ export function twinModule(ctx: Ctx): ModuleView {
   const stage = h("div", { class: "twin-stage" }, canvas,
     h("div", { class: "twin-hud" }, h("button", { class: "btn", type: "button", onClick: () => { scene?.flyTo("overview"); zone = "overview"; drawZones(); } }, "Reset camera"), modeBar,
       h("button", { class: "btn", type: "button", onClick: () => pick(null) }, "Clear selection")),
-    h("div", { class: "twin-foot" }, h("span", {}, "Drag orbit. Scroll zoom. Right-drag pan. Click to inspect."), h("span", {}, "Plant positions are schematic")), hoverTip);
+    h("div", { class: "twin-foot" }, h("span", {}, "Drag orbit. Scroll zoom. Right-drag pan. Click to inspect."), h("span", {}, "Plant positions are schematic. LED rate follows synthetic telemetry.")), hoverTip);
   const el = h("div", { class: "stack" },
     h("div", { class: "page-head" }, h("p", { class: "pattern" }, "Split pane"), h("h1", {}, "Facility Digital Twin"),
       h("p", {}, "Browser view of the rack layout from the Python geometry module, linked to equipment records by asset ID. Telemetry is a synthetic offline example, not a live feed. The source OpenUSD is rack-only massing, not a facility BIM model.")),
@@ -123,7 +123,7 @@ export function twinModule(ctx: Ctx): ModuleView {
       h("div", { class: "side left" },
         h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Zones")), h("div", { class: "panel-body", style: "padding:8px" }, zones)),
         h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Layers")), h("div", { class: "panel-body", style: "padding:8px" },
-          layerBox("racks", "Racks"), layerBox("halls", "Hall shells"), layerBox("aisles", "Aisle containment"), layerBox("electrical", "Electrical plant"), layerBox("cooling", "Cooling plant"), layerBox("relations", "Relationship lines"), layerBox("labels", "Labels"), colorLegend)),
+          layerBox("racks", "Racks"), layerBox("halls", "Hall shells"), layerBox("aisles", "Aisle containment"), layerBox("leds", "Rack LEDs"), layerBox("electrical", "Electrical plant"), layerBox("cooling", "Cooling plant"), layerBox("relations", "Relationship lines"), layerBox("labels", "Labels"), colorLegend)),
         h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Find asset")), h("div", { class: "panel-body" }, search, datalist,
           h("div", { class: "tags" }, ...["UPS-A-01", "GEN-B-01", "CHL-SHARED-01", "CDU-H01-01"].map((id) => h("button", { class: "tag", type: "button", onClick: () => pick({ kind: "equipment", id }, true) }, id)))))),
       stage,

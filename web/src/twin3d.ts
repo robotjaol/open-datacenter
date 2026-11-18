@@ -4,18 +4,19 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import type { Equipment, Rack, Twin } from "./types";
 import { buildRack } from "./models/rack";
 import { buildContainment } from "./models/containment";
+import { ledGeometry, ledMaterial } from "./leds";
 import { buildTray } from "./models/tray";
 import { buildPlant } from "./models/plant";
 import { availableModels, loadExternal } from "./models/external";
 import { RACK_SIZE } from "./models/rack";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
-interface RackSet { ids: string[]; center: THREE.Vector3; simple: THREE.InstancedMesh; body: THREE.InstancedMesh; mid: THREE.InstancedMesh; accent: THREE.InstancedMesh; hallId: string; trays?: THREE.Mesh }
+interface RackSet { ids: string[]; center: THREE.Vector3; simple: THREE.InstancedMesh; body: THREE.InstancedMesh; mid: THREE.InstancedMesh; accent: THREE.InstancedMesh; led: THREE.InstancedMesh; hallId: string; trays?: THREE.Mesh }
 const DETAIL_DISTANCE = 35;   // full detail inside this distance
 const MID_DISTANCE = 70;      // medium detail up to here, then a plain block
 
 export type ColorMode = "hall" | "telemetry" | "neutral";
-export interface Layers { aisles: boolean; halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
+export interface Layers { leds: boolean; aisles: boolean; halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
 export interface Picked { kind: "rack" | "equipment" | "hall"; id: string }
 
 const SYSTEM_COLOR: Record<string, number> = { UPS: 0x7c9cff, TX: 0xf2b84b, GEN: 0xe8829f, CHL: 0x38bdf8, CDU: 0x6fcf97 };
@@ -62,6 +63,11 @@ export class TwinScene {
   private trays = new THREE.Group();
   private aisleGroup = new THREE.Group();
   private casters: THREE.Object3D[] = [];
+  private ledMat = ledMaterial(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  private ledsOn = true;
+  private ledPhase = 0;
+  private lastTick = performance.now();
+  activity = 1;            // global load factor for LED rate, set by the simulation
   private dirty = true;
   private shadowDirty = true;
   renderedFrames = 0;
@@ -165,6 +171,8 @@ export class TwinScene {
     const geo = buildRack();
     const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0.55 });
     const accentMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const vals = this.twin.racks.map((r) => r.telemetry[0]?.value ?? NaN).filter((v) => Number.isFinite(v));
+    const lo = Math.min(...vals), hi = Math.max(...vals);
     const simpleMat = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.2 });
     const m = new THREE.Matrix4();
     for (const hall of this.twin.halls) {
@@ -176,10 +184,11 @@ export class TwinScene {
         return im;
       };
       const set: RackSet = { hallId: hall.id, ids: racks.map((r) => r.asset_id), center: new THREE.Vector3(hall.x + hall.width / 2, 1, hall.y + hall.depth / 2),
-        simple: mk(geo.simple, simpleMat), mid: mk(geo.mid, bodyMat), body: mk(geo.body, bodyMat), accent: mk(geo.accent, accentMat) };
+        simple: mk(geo.simple, simpleMat), mid: mk(geo.mid, bodyMat), body: mk(geo.body, bodyMat), accent: mk(geo.accent, accentMat),
+        led: new THREE.InstancedMesh(ledGeometry(geo.led, racks.map((r) => { const v = r.telemetry[0]?.value; return v === undefined || hi <= lo ? 0.5 : (v - lo) / (hi - lo); })), this.ledMat, n) };
       racks.forEach((r, i) => {
         placeRack(m, r);
-        set.simple.setMatrixAt(i, m); set.mid.setMatrixAt(i, m); set.body.setMatrixAt(i, m); set.accent.setMatrixAt(i, m);
+        set.simple.setMatrixAt(i, m); set.mid.setMatrixAt(i, m); set.body.setMatrixAt(i, m); set.accent.setMatrixAt(i, m); set.led.setMatrixAt(i, m);
         this.rackLoc.set(r.asset_id, { set, idx: i });
       });
       // invisible low poly caster keeps shadows stable while the detail level changes
@@ -187,9 +196,9 @@ export class TwinScene {
       racks.forEach((r, i) => { placeRack(m, r); caster.setMatrixAt(i, m); });
       caster.castShadow = true; caster.raycast = () => {}; this.casters.push(caster); this.scene.add(caster);
       set.body.receiveShadow = true; set.mid.receiveShadow = true; set.simple.receiveShadow = true;
-      for (const im of [set.simple, set.mid, set.body, set.accent]) { im.computeBoundingSphere(); im.frustumCulled = true; }
-      set.body.visible = false; set.mid.visible = false; set.accent.visible = false;
-      this.scene.add(set.simple, set.mid, set.body, set.accent);
+      for (const im of [set.simple, set.mid, set.body, set.accent, set.led]) { im.computeBoundingSphere(); im.frustumCulled = true; }
+      set.body.visible = false; set.mid.visible = false; set.accent.visible = false; set.led.visible = false; set.led.raycast = () => {};
+      this.scene.add(set.simple, set.mid, set.body, set.accent, set.led);
       this.rackSets.push(set);
     }
   }
@@ -246,7 +255,7 @@ export class TwinScene {
     if (!have.size) return;
     if (have.has("rack")) {
       const rack = await loadExternal("rack", { w: RACK_SIZE.w, d: RACK_SIZE.d, h: RACK_SIZE.h, origin: "floor" });
-      if (rack && !this.disposed) { for (const st of this.rackSets) { st.body.geometry = rack; st.mid.geometry = rack; st.accent.count = 0; } this.dirty = true; }
+      if (rack && !this.disposed) { for (const st of this.rackSets) { st.body.geometry = rack; st.mid.geometry = rack; st.accent.count = 0; st.led.count = 0; } this.dirty = true; }
     }
     const names: Record<string, string> = { UPS: "ups", TX: "tx", GEN: "gen", CHL: "chl", CDU: "cdu" };
     for (const [id, mesh] of this.equipMeshes) {
@@ -262,7 +271,7 @@ export class TwinScene {
     for (const s of this.rackSets) {
       const d = this.camera.position.distanceTo(s.center), full = d < DETAIL_DISTANCE, mid = !full && d < MID_DISTANCE;
       s.body.visible = this.racksVisible && full; s.mid.visible = this.racksVisible && mid;
-      s.accent.visible = this.racksVisible && (full || mid); s.simple.visible = this.racksVisible && !full && !mid;
+      s.accent.visible = this.racksVisible && (full || mid); s.led.visible = this.ledsOn && this.racksVisible && (full || mid); s.simple.visible = this.racksVisible && !full && !mid;
       if (s.trays) s.trays.visible = this.racksVisible && (full || mid);
     }
     // labels are fixed in world size, so hide them when the camera is close
@@ -292,7 +301,7 @@ export class TwinScene {
 
   setLayers(l: Layers) {
     this.hallGroup.visible = l.halls;
-    this.aisleGroup.visible = l.aisles; this.racksVisible = l.racks; this.trays.visible = l.racks; this.dirty = true; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
+    this.aisleGroup.visible = l.aisles; this.ledsOn = l.leds; this.racksVisible = l.racks; this.trays.visible = l.racks; this.dirty = true; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
     this.updateLod();
     this.labelGroup.visible = l.labels;
     this.lines.visible = l.relations;
@@ -491,6 +500,11 @@ export class TwinScene {
       if (k >= 1) this.anim = null;
     }
     if (this.anim) this.dirty = true;
+    const now = performance.now(), dt = now - this.lastTick;
+    if (dt >= 50 && this.ledMat.uniforms.uCalm.value === 0 && this.rackSets.some((r) => r.led.visible)) {
+      this.lastTick = now; this.ledPhase += (dt / 1000) * this.activity;
+      this.ledMat.uniforms.uPhase.value = this.ledPhase; this.dirty = true;
+    } else if (dt >= 50) this.lastTick = now;
     this.controls.update();
     if (!this.dirty) return;
     this.dirty = false;

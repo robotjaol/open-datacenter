@@ -81,3 +81,19 @@ describe("generic hot aisle containment", () => {
   });
   it("is light", () => expect(tris(c.frame) + tris(c.glass)).toBeLessThan(5_000));
 });
+
+describe("rack status LEDs", () => {
+  it("builds a separate LED geometry, one box per unit", () => {
+    const g = buildRack();
+    const tris = g.led.getAttribute("position").count / 3;
+    expect(tris).toBeGreaterThan(0);
+    expect(tris).toBeLessThanOrEqual(12 * 42);
+  });
+  it("keeps blink rate under 3 Hz", async () => {
+    const { ledGeometry, LED_MAX_HZ } = await import("../src/leds");
+    const g = ledGeometry(buildRack().led, [0, 0.5, 1, 7, -2]);
+    const rate = Array.from(g.getAttribute("aRate").array as Float32Array);
+    expect(Math.max(...rate)).toBeCloseTo(LED_MAX_HZ, 5);
+    expect(Math.max(...rate)).toBeLessThan(3);
+  });
+});
