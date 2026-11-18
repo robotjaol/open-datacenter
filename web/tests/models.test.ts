@@ -2,6 +2,7 @@ import type { BufferGeometry } from "three";
 import { describe, expect, it } from "vitest";
 import { buildRack, RACK_SIZE, RACK_UNITS } from "../src/models/rack";
 import { buildPlant } from "../src/models/plant";
+import { buildTray } from "../src/models/tray";
 
 const tris = (g: BufferGeometry) => g.getAttribute("position").count / 3;
 
@@ -35,4 +36,23 @@ describe("generic plant models", () => {
     });
   }
   it("returns null for an unknown system", () => expect(buildPlant("XYZ", sizes.UPS, 0)).toBeNull());
+});
+
+describe("generic cable tray", () => {
+  const tray = buildTray(12, 3.25);
+  it("spans the row length and is 0.3 m wide", () => {
+    const b = tray.boundingBox!;
+    expect(b.max.x - b.min.x).toBeGreaterThan(11.9);
+    expect(b.max.x - b.min.x).toBeLessThan(12.1);
+    expect(b.max.z - b.min.z).toBeLessThan(0.5);
+  });
+  it("hangers reach the ceiling rise and rungs top sits at zero", () => {
+    const b = tray.boundingBox!;
+    expect(b.max.y).toBeGreaterThan(3.1);
+    expect(b.max.y).toBeLessThan(3.4);
+  });
+  it("is light and vertex coloured", () => {
+    expect(tris(tray)).toBeLessThan(12_000);
+    expect(tray.hasAttribute("color")).toBe(true);
+  });
 });

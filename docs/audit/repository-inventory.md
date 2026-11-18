@@ -29,7 +29,7 @@ Facility concept (observed in config and reference report): 5 MW IT, 4 halls, 20
 | `dcf/server.py` | Local HTTP API and static host. |
 | `web/` | Vite, TypeScript, three.js interface with ten modules. |
 | `tests/test_webdata.py`, `test_scenario.py`, `test_server.py` | 31 new Python tests. |
-| `web/tests/` | 32 frontend tests. |
+| `web/tests/` | 35 frontend tests. |
 | `docs/audit`, `docs/architecture`, `docs/digital-twin`, `docs/validation` | This documentation set. |
 | `assets/screenshots/` | Real captures from the running application. |
 

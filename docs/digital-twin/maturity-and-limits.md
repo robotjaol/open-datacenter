@@ -34,6 +34,8 @@ Each record shows metric, value, unit, timestamp, source, quality and a syntheti
 | Origin | Original procedural models written for this repository. Generic shapes from common public dimensions. Not vendor models, not scans. |
 | Rack | 42U class, 4,424 triangles, 200 racks about 0.9 million triangles at full detail; box stand-in beyond 70 m |
 | Plant | UPS about 1.0 k triangles, transformer 4.2 k, generator 1.5 k, chiller 4.6 k, CDU 0.9 k |
+| Cable tray | Generic ladder tray, 0.3 m wide, one per rack row at 2.75 m. Schematic: the source data has no cable routing. |
+| Aisle containment | Not drawn. The source geometry has every rack facing the same way, so it defines no hot or cold aisles. Containment needs that to be added to the Python model first. |
 | Placement | Racks from `dcf.geometry`. Plant is schematic. |
 | NVIDIA assets | Not used. DSX sample data is licensed for evaluation only. SimReady Central assets are hosted by each OEM under its own licence. |
 | Your own assets | Optional GLB override in `web/public/models/`, never committed. |

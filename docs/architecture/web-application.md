@@ -19,6 +19,6 @@ Provenance chips use shape and text, not colour alone. Amber marks synthetic and
 
 3D scene (`web/src/twin3d.ts`): instanced racks, raycast picking, orbit controls, layer toggles, colour modes (hall, telemetry, neutral), zone fly to. Plant positions are schematic display positions; rack positions come from `dcf.geometry`.
 
-Models (`web/src/models/`): `kit.ts` merges boxes and cylinders into one vertex coloured geometry. `rack.ts` builds a 42U rack (4,424 triangles). `plant.ts` builds UPS, transformer, generator, chiller and CDU (852 to 4,564 triangles). Racks beyond 70 m switch to a box stand-in. `external.ts` can replace any model with a local GLB from `web/public/models/` (listed by `GET /api/models`, git ignored). All shipped models are generic.
+Models (`web/src/models/`): `kit.ts` merges boxes and cylinders into one vertex coloured geometry. `rack.ts` builds a 42U rack (4,424 triangles). `plant.ts` builds UPS, transformer, generator, chiller and CDU (852 to 4,564 triangles). Racks beyond 70 m switch to a box stand-in. `tray.ts` builds the overhead cable tray. Shadows come from one directional light and are rendered once, then again only when layers or models change. `external.ts` can replace any model with a local GLB from `web/public/models/` (listed by `GET /api/models`, git ignored). All shipped models are generic.
 
 Test hook: `window.__twin` exposes `select`, `screenOf`, `selected`, `flyTo` for browser checks.

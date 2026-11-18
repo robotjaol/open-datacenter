@@ -142,7 +142,8 @@ export function twinModule(ctx: Ctx): ModuleView {
     scene.onHover = (id, x, y) => { if (!id) { hoverTip.hidden = true; return; } hoverTip.hidden = false; hoverTip.textContent = id; hoverTip.style.left = `${x + 14}px`; hoverTip.style.top = `${y + 14}px`; };
     legend();
     (window as any).__twin = { select: (id: string) => { const r = twin.racks.find((x) => x.asset_id === id); pick(r ? { kind: "rack", id } : { kind: "equipment", id }, true); },
-      screenOf: (id: string) => scene!.screenOf(id), selected: () => selected, flyTo: (z: string) => scene!.flyTo(z, true), setMode, layers: (l: Partial<Layers>) => { Object.assign(layers, l); scene!.setLayers(layers); } };
+      screenOf: (id: string) => scene!.screenOf(id), selected: () => selected, flyTo: (z: string) => scene!.flyTo(z, true), setMode, layers: (l: Partial<Layers>) => { Object.assign(layers, l); scene!.setLayers(layers); },
+      look: (p: number[], t: number[]) => { scene!.camera.position.set(p[0], p[1], p[2]); scene!.controls.target.set(t[0], t[1], t[2]); scene!.controls.update(); } };
     dispose = () => { scene?.dispose(); delete (window as any).__twin; };
   });
   return { el, dispose: () => dispose?.() };
