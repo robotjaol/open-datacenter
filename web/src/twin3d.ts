@@ -10,8 +10,9 @@ import { availableModels, loadExternal } from "./models/external";
 import { RACK_SIZE } from "./models/rack";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
-interface RackSet { ids: string[]; center: THREE.Vector3; simple: THREE.InstancedMesh; body: THREE.InstancedMesh; accent: THREE.InstancedMesh; hallId: string; trays?: THREE.Mesh }
-const DETAIL_DISTANCE = 70;
+interface RackSet { ids: string[]; center: THREE.Vector3; simple: THREE.InstancedMesh; body: THREE.InstancedMesh; mid: THREE.InstancedMesh; accent: THREE.InstancedMesh; hallId: string; trays?: THREE.Mesh }
+const DETAIL_DISTANCE = 35;   // full detail inside this distance
+const MID_DISTANCE = 70;      // medium detail up to here, then a plain block
 
 export type ColorMode = "hall" | "telemetry" | "neutral";
 export interface Layers { aisles: boolean; halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
@@ -175,20 +176,20 @@ export class TwinScene {
         return im;
       };
       const set: RackSet = { hallId: hall.id, ids: racks.map((r) => r.asset_id), center: new THREE.Vector3(hall.x + hall.width / 2, 1, hall.y + hall.depth / 2),
-        simple: mk(geo.simple, simpleMat), body: mk(geo.body, bodyMat), accent: mk(geo.accent, accentMat) };
+        simple: mk(geo.simple, simpleMat), mid: mk(geo.mid, bodyMat), body: mk(geo.body, bodyMat), accent: mk(geo.accent, accentMat) };
       racks.forEach((r, i) => {
         placeRack(m, r);
-        set.simple.setMatrixAt(i, m); set.body.setMatrixAt(i, m); set.accent.setMatrixAt(i, m);
+        set.simple.setMatrixAt(i, m); set.mid.setMatrixAt(i, m); set.body.setMatrixAt(i, m); set.accent.setMatrixAt(i, m);
         this.rackLoc.set(r.asset_id, { set, idx: i });
       });
       // invisible low poly caster keeps shadows stable while the detail level changes
       const caster = new THREE.InstancedMesh(geo.simple, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }), n);
       racks.forEach((r, i) => { placeRack(m, r); caster.setMatrixAt(i, m); });
       caster.castShadow = true; caster.raycast = () => {}; this.casters.push(caster); this.scene.add(caster);
-      set.body.receiveShadow = true; set.simple.receiveShadow = true;
-      for (const im of [set.simple, set.body, set.accent]) { im.computeBoundingSphere(); im.frustumCulled = true; }
-      set.body.visible = false; set.accent.visible = false;
-      this.scene.add(set.simple, set.body, set.accent);
+      set.body.receiveShadow = true; set.mid.receiveShadow = true; set.simple.receiveShadow = true;
+      for (const im of [set.simple, set.mid, set.body, set.accent]) { im.computeBoundingSphere(); im.frustumCulled = true; }
+      set.body.visible = false; set.mid.visible = false; set.accent.visible = false;
+      this.scene.add(set.simple, set.mid, set.body, set.accent);
       this.rackSets.push(set);
     }
   }
@@ -245,7 +246,7 @@ export class TwinScene {
     if (!have.size) return;
     if (have.has("rack")) {
       const rack = await loadExternal("rack", { w: RACK_SIZE.w, d: RACK_SIZE.d, h: RACK_SIZE.h, origin: "floor" });
-      if (rack && !this.disposed) { for (const st of this.rackSets) { st.body.geometry = rack; st.accent.count = 0; } this.dirty = true; }
+      if (rack && !this.disposed) { for (const st of this.rackSets) { st.body.geometry = rack; st.mid.geometry = rack; st.accent.count = 0; } this.dirty = true; }
     }
     const names: Record<string, string> = { UPS: "ups", TX: "tx", GEN: "gen", CHL: "chl", CDU: "cdu" };
     for (const [id, mesh] of this.equipMeshes) {
@@ -259,10 +260,13 @@ export class TwinScene {
   // swap between the box stand-in and the full rack model by distance
   private updateLod() {
     for (const s of this.rackSets) {
-      const near = this.camera.position.distanceTo(s.center) < DETAIL_DISTANCE;
-      s.body.visible = this.racksVisible && near; s.accent.visible = this.racksVisible && near; s.simple.visible = this.racksVisible && !near;
-      if (s.trays) s.trays.visible = this.racksVisible && near;
+      const d = this.camera.position.distanceTo(s.center), full = d < DETAIL_DISTANCE, mid = !full && d < MID_DISTANCE;
+      s.body.visible = this.racksVisible && full; s.mid.visible = this.racksVisible && mid;
+      s.accent.visible = this.racksVisible && (full || mid); s.simple.visible = this.racksVisible && !full && !mid;
+      if (s.trays) s.trays.visible = this.racksVisible && (full || mid);
     }
+    // labels are fixed in world size, so hide them when the camera is close
+    for (const t of this.labelGroup.children) t.visible = this.camera.position.distanceTo(t.position) > 30;
   }
 
   private buildEquipment() {
@@ -352,9 +356,9 @@ export class TwinScene {
         else { c.multiplyScalar(0.28); body.setRGB(0.3, 0.3, 0.3); }
       }
       const loc = this.rackLoc.get(r.asset_id)!;
-      loc.set.simple.setColorAt(loc.idx, c); loc.set.accent.setColorAt(loc.idx, c); loc.set.body.setColorAt(loc.idx, body);
+      loc.set.simple.setColorAt(loc.idx, c); loc.set.accent.setColorAt(loc.idx, c); loc.set.body.setColorAt(loc.idx, body); loc.set.mid.setColorAt(loc.idx, body);
     });
-    for (const st of this.rackSets) for (const im of [st.simple, st.accent, st.body]) im.instanceColor!.needsUpdate = true;
+    for (const st of this.rackSets) for (const im of [st.simple, st.accent, st.body, st.mid]) im.instanceColor!.needsUpdate = true;
     for (const [id, mesh] of this.equipMeshes) {
       const mat = mesh.material as THREE.MeshStandardMaterial;
       const on = rel.equipment.has(id);
@@ -448,12 +452,12 @@ export class TwinScene {
     this.ray.set(((clientX - rect.left) / rect.width) * 2 - 1, -(((clientY - rect.top) / rect.height) * 2 - 1));
     this.raycaster.setFromCamera(this.ray, this.camera);
     const targets: THREE.Object3D[] = [];
-    for (const st of this.rackSets) for (const im of [st.simple, st.body]) if (im.visible) targets.push(im);
+    for (const st of this.rackSets) for (const im of [st.simple, st.mid, st.body]) if (im.visible) targets.push(im);
     for (const m of this.equipMeshes.values()) if (m.visible) targets.push(m);
     if (this.hallGroup.visible) for (const f of this.hallFloors.values()) targets.push(f);
     const hit = this.raycaster.intersectObjects(targets, false)[0];
     if (!hit) return null;
-    const set = this.rackSets.find((st) => st.simple === hit.object || st.body === hit.object);
+    const set = this.rackSets.find((st) => st.simple === hit.object || st.mid === hit.object || st.body === hit.object);
     if (set) return { kind: "rack", id: set.ids[hit.instanceId!] };
     return { kind: hit.object.userData.kind, id: hit.object.userData.id };
   }

@@ -19,6 +19,13 @@ describe("generic rack model", () => {
   });
   it("stays within a triangle budget for 200 instances", () => expect(tris(rack.body) * 200).toBeLessThan(2_000_000));
   it("carries vertex colours", () => expect(rack.body.hasAttribute("color")).toBe(true));
+  it("medium level keeps the silhouette at under a quarter of the triangles", () => {
+    const b = rack.mid.boundingBox!, f = rack.body.boundingBox!;
+    expect(b.max.y).toBeGreaterThan(f.max.y - 0.1);
+    expect(b.max.x - b.min.x).toBeGreaterThan(RACK_SIZE.w - 0.05);
+    expect(tris(rack.mid)).toBeLessThan(tris(rack.body) / 4);
+    expect(rack.mid.hasAttribute("color")).toBe(true);
+  });
 });
 
 describe("generic plant models", () => {

@@ -15,7 +15,7 @@ const STACK: Unit[] = [
 ];
 export const RACK_UNITS = STACK.reduce((a, s) => a + s.u, 0);
 
-export interface RackGeometry { body: THREE.BufferGeometry; accent: THREE.BufferGeometry; simple: THREE.BufferGeometry }
+export interface RackGeometry { body: THREE.BufferGeometry; mid: THREE.BufferGeometry; accent: THREE.BufferGeometry; simple: THREE.BufferGeometry }
 
 export function buildRack(): RackGeometry {
   const k = new Kit(), a = new Kit();
@@ -76,6 +76,24 @@ export function buildRack(): RackGeometry {
   // low detail stand-in for distance
   const s = new Kit();
   s.box(0, 1.1, 0, W * 0.96, 2.2, D * 0.96, 0x2a3138);
-  return { body: k.build(), accent: a.build(), simple: s.build() };
+  // medium detail: same silhouette and faceplates, without ports, bays, outlets or fittings
+  const m = new Kit();
+  m.box(0, 0.04, 0, W, 0.08, D, PAINT.darkSteel);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) m.box(sx * (W / 2 - 0.015), 1.12, sz * (D / 2 - 0.015), 0.03, 2.08, 0.03, PAINT.steel);
+  m.box(0, 2.17, 0, W, 0.04, D, PAINT.steel);
+  for (const sx of [-1, 1]) m.box(sx * (W / 2 - 0.004), 1.12, 0, 0.008, 2.04, D - 0.06, 0x20262c);
+  m.box(0, Y0 + 21 * U, 0, 0.46, 42 * U - 0.004, 0.84, 0x0c0f12);
+  let v = 0;
+  for (const st of STACK) {
+    const y = Y0 + (v + st.u / 2) * U, h = st.u * U - 0.0025;
+    v += st.u;
+    const colour = st.kind === "sw" ? 0x252b31 : st.kind === "blank" || st.kind === "cable" || st.kind === "patch" ? 0x1a1e23 : 0x181c21;
+    m.box(0, y, fz + 0.04, 0.4826, h, st.kind === "blank" ? 0.006 : 0.03, colour);
+    if (st.kind === "srv2" || st.kind === "srv4") m.box(0.03, y, fz + 0.058, 0.3, h * 0.68, 0.004, PAINT.black);
+    if (st.kind === "sw" || st.kind === "patch") m.box(0, y, fz + 0.058, 0.4, h * 0.4, 0.004, 0x050607);
+  }
+  for (const sx of [-1, 1]) m.box(sx * 0.255, 1.05, -D / 2 + 0.12, 0.05, 1.7, 0.05, 0x181c20);
+  for (const [i, x] of [-0.1, 0.1].entries()) m.cyl(x, 1.1, -D / 2 + 0.2, 0.022, 1.8, "y", i === 0 ? PAINT.blue : PAINT.red, 8);
+  return { body: k.build(), mid: m.build(), accent: a.build(), simple: s.build() };
 }
 export const RACK_SIZE = { w: W, d: D, h: 2.2 };

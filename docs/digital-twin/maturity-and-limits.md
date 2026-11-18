@@ -32,7 +32,7 @@ Each record shows metric, value, unit, timestamp, source, quality and a syntheti
 | Item | Fact |
 | --- | --- |
 | Origin | Original procedural models written for this repository. Generic shapes from common public dimensions. Not vendor models, not scans. |
-| Rack | 42U class, 4,424 triangles, 200 racks about 0.9 million triangles at full detail; box stand-in beyond 70 m |
+| Rack | 42U class, 4,424 triangles, 200 racks about 0.9 million triangles at full detail; medium model from 35 to 70 m, box stand-in beyond 70 m |
 | Plant | UPS about 1.0 k triangles, transformer 4.2 k, generator 1.5 k, chiller 4.6 k, CDU 0.9 k |
 | Cable tray | Generic ladder tray, 0.3 m wide, one per rack row at 2.75 m. Schematic: the source data has no cable routing. |
 | Aisle containment | Generic glazed roof and end doors over hot aisles. Facing and aisles are a concept assumption added in `dcf.geometry.aisles`: rows alternate so fronts meet at cold aisles and backs at hot aisles. No rack moves, committed DXF, SVG and USD are unchanged, and no airflow or thermal result is modelled. |

@@ -8,7 +8,7 @@ Evidence recorded on the build machine (Linux, CPython 3.x, Node 22.23.5, Chrome
 | Repository verification | `python scripts/verify_repository.py` | PASS (hashes, schema, costs, asset IDs, six offline cases, local links) |
 | Typecheck | `npm run typecheck` (tsc strict) | 0 errors |
 | Lint | `npm run lint` | 0 errors |
-| Frontend tests | `npx vitest run` | 38 passed (includes rack, plant, cable tray and containment geometry checks) |
+| Frontend tests | `npx vitest run` | 39 passed (includes rack, plant, cable tray and containment geometry checks) |
 | Build | `npm run build` | exit 0 |
 | Ten modules render | Headless Chrome visits every route | No page errors, no console errors |
 | 3D models fit their footprints | `web/tests/models.test.ts` | Pass |

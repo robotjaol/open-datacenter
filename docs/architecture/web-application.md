@@ -19,7 +19,7 @@ Provenance chips use shape and text, not colour alone. Amber marks synthetic and
 
 3D scene (`web/src/twin3d.ts`): instanced racks, raycast picking, orbit controls, layer toggles, colour modes (hall, telemetry, neutral), zone fly to. Plant positions are schematic display positions; rack positions come from `dcf.geometry`.
 
-Models (`web/src/models/`): `kit.ts` merges boxes and cylinders into one vertex coloured geometry. `rack.ts` builds a 42U rack (4,424 triangles). `plant.ts` builds UPS, transformer, generator, chiller and CDU (852 to 4,564 triangles). Racks beyond 70 m switch to a box stand-in. `tray.ts` builds the overhead cable tray. The 3D loop draws only when something changed (camera, selection, layers, colour mode, resize), so an idle view costs no GPU work. Three.js is loaded by a dynamic import when the Twin page opens. Trays and aisle layers are merged by material. Shadows come from one directional light and are rendered once, then again only when layers or models change. `external.ts` can replace any model with a local GLB from `web/public/models/` (listed by `GET /api/models`, git ignored). All shipped models are generic.
+Models (`web/src/models/`): `kit.ts` merges boxes and cylinders into one vertex coloured geometry. `rack.ts` builds a 42U rack (4,424 triangles). `plant.ts` builds UPS, transformer, generator, chiller and CDU (852 to 4,564 triangles). Racks use three levels by distance from the hall centre: full detail under 35 m, a medium model (silhouette, faceplates, vent fields, PDUs and manifold without ports or fittings) to 70 m, and a box beyond that. Hall labels hide when the camera is within 30 m. `tray.ts` builds the overhead cable tray. The 3D loop draws only when something changed (camera, selection, layers, colour mode, resize), so an idle view costs no GPU work. Three.js is loaded by a dynamic import when the Twin page opens. Trays and aisle layers are merged by material. Shadows come from one directional light and are rendered once, then again only when layers or models change. `external.ts` can replace any model with a local GLB from `web/public/models/` (listed by `GET /api/models`, git ignored). All shipped models are generic.
 
 Test hook: `window.__twin` exposes `select`, `screenOf`, `selected`, `flyTo` for browser checks.
 
@@ -34,7 +34,8 @@ Headless Chrome with a software renderer, 1440 x 900, reference scenario. Draw c
 | Overview: triangles | 74,036 | 56,276 |
 | Hall oblique view: draw calls | 48 | 35 |
 | Inside a hot aisle: draw calls | 27 | 19 |
+| Hall oblique view (22 m): triangles | 486,038 | 298,038 |
 | JS on first page load (gzip) | 196.7 kB | 26.0 kB |
 | Twin page JS, loaded on demand (gzip) | included above | 171.6 kB |
 
-Triangle counts inside a hall stay near 0.25 to 0.5 million because every rack near the camera is drawn in full detail. Frame time on a real GPU was not measured. A distance level of detail for plant was tried and removed, because it saved little and made the overview look plain.
+Triangle counts in a hall view stay near 0.3 million because plant (about 83 thousand) and nearby racks are drawn in detail. Frame time on a real GPU was not measured. A distance level of detail for plant was tried and removed, because it saved little and made the overview look plain.
