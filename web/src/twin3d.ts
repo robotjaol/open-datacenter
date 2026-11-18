@@ -6,6 +6,7 @@ import { buildRack, buildRackParts, FRONT_Z, RACK_UNIT_LIST, unitAtHeight } from
 import { buildContainment } from "./models/containment";
 import { ledGeometry, ledMaterial } from "./leds";
 import { buildRoutes, FlowLayer } from "./flows";
+import { levelFor, LevelInfo, levelKey } from "./levels";
 import { fmtLength, measure, Measurement, ORTHO_FOV, orthoScale, PERSPECTIVE_FOV, sectionPlane, SectionAxis, ViewName, VIEW_DIRECTION } from "./cad";
 import { buildTray } from "./models/tray";
 import { buildPlant } from "./models/plant";
@@ -68,6 +69,13 @@ export class TwinScene {
   private ledMat = ledMaterial(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   private ledsOn = true;
   private layerAisles = true;
+  private hemi!: THREE.HemisphereLight;
+  private sun!: THREE.DirectionalLight;
+  private spot: THREE.SpotLight | null = null;
+  private accentMat!: THREE.MeshBasicMaterial;
+  private levelKeyLast = "";
+  private levelAt = 0;
+  onLevel: (i: LevelInfo) => void = () => {};
   private flows!: FlowLayer;
   private sim = { playing: false, power: 2, cooling: 1.4 };
   private lastFlow = performance.now();
@@ -84,13 +92,47 @@ export class TwinScene {
   private frame = 0;
   private disposed = false;
   private down = { x: 0, y: 0 };
-  private anim: { t0: number; from: THREE.Vector3; to: THREE.Vector3; ft: THREE.Vector3; tt: THREE.Vector3 } | null = null;
+  private anim: { t0: number; dur: number; from: THREE.Vector3; to: THREE.Vector3; ft: THREE.Vector3; tt: THREE.Vector3 } | null = null;
   private selected: Picked | null = null;
   private resize: ResizeObserver;
   // component level: selected unit marker and exploded assembly
   private unitMarker = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.38, depthTest: false }));
   private exploded: { id: string; group: THREE.Group; parts: { mesh: THREE.Mesh; dir: THREE.Vector3; unit?: number }[]; k: number; to: number; t0: number; from: number; settled?: boolean; hidden: { im: THREE.InstancedMesh; idx: number }[] } | null = null;
   get isExploded() { return this.exploded !== null && this.exploded.to === 1; }
+  // what the camera is looking at: level, hall, row, rack and unit, for the infographic card
+  levelInfo(): LevelInfo {
+    const t = this.controls.target, d = this.camera.position.distanceTo(t) * this.lodScale;
+    const level = levelFor(d);
+    const hall = this.twin.halls.find((h) => t.x >= h.x && t.x <= h.x + h.width && t.z >= h.y && t.z <= h.y + h.depth);
+    if (!hall) return { level: "site" };
+    if (level === "site") return { level };
+    const ys = [...new Set(this.twin.racks.filter((r) => r.hall_id === hall.id).map((r) => r.y))].sort((a, b) => a - b);
+    let row = 0; ys.forEach((y, i) => { if (Math.abs(y - t.z) < Math.abs(ys[row] - t.z)) row = i; });
+    const out: LevelInfo = { level, hallId: hall.id, row: row + 1, rows: ys.length };
+    if (level === "rack" || level === "unit") {
+      const near = this.twin.racks.filter((r) => r.hall_id === hall.id).map((r) => ({ r, d: Math.hypot(r.x + r.width / 2 - t.x, r.y + r.depth / 2 - t.z) })).sort((a, b) => a.d - b.d)[0];
+      const sel = this.selected;
+      if (sel?.kind === "rack" && this.twin.racks.find((r) => r.asset_id === sel.id)?.hall_id === hall.id) { out.rackId = sel.id; if (level === "unit" && sel.unit !== undefined) out.unit = sel.unit; }
+      else if (near && near.d < 1.6) out.rackId = near.r.asset_id; else out.level = "row";
+      if (out.level === "unit" && out.unit === undefined) out.level = "rack";
+    }
+    return out;
+  }
+
+  // headlamp style spotlight: the scene dims and a cone follows the point the camera looks at
+  setSpotlight(on: boolean) {
+    if (on === (this.spot !== null)) return;
+    if (on) {
+      this.spot = new THREE.SpotLight(0xfff4e0, 6, 0, 0.3, 0.75, 0); this.spot.castShadow = false;
+      this.scene.add(this.spot, this.spot.target);
+      this.hemi.intensity = 0.1; this.sun.intensity = 0.25; this.scene.environmentIntensity = 0.08; this.accentMat.color.setHex(0x4a4f55);
+    } else if (this.spot) {
+      this.scene.remove(this.spot, this.spot.target); this.spot.dispose(); this.spot = null;
+      this.hemi.intensity = 0.6; this.sun.intensity = 1.3; this.scene.environmentIntensity = 0.55; this.accentMat.color.setHex(0xffffff);
+    }
+    this.dirty = true;
+  }
+
   // end-to-end simulation: speeds are visual, proportional to the hourly load
   setSimulation(s: { playing: boolean; power: number; cooling: number; activity: number }) {
     this.sim = { playing: s.playing, power: s.power, cooling: s.cooling }; this.activity = s.activity; this.dirty = true;
@@ -125,8 +167,8 @@ export class TwinScene {
     const xs = [...twin.halls.map((h) => h.x), ...twin.halls.map((h) => h.x + h.width), ...twin.equipment.map((e) => e.display_position.x + e.display_position.width)];
     const ys = [...twin.halls.map((h) => h.y), ...twin.halls.map((h) => h.y + h.depth), ...twin.equipment.map((e) => e.display_position.y + e.display_position.depth)];
     this.center.set((Math.min(...xs) + Math.max(...xs)) / 2, 0, (Math.min(...ys) + Math.max(...ys)) / 2);
-    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x1a222c, 0.6));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.3);
+    this.hemi = new THREE.HemisphereLight(0xcfe3ff, 0x1a222c, 0.6); this.scene.add(this.hemi);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.3); this.sun = sun;
     sun.position.set(this.center.x + 40, 70, this.center.z + 30); sun.target.position.set(this.center.x, 0, this.center.z);
     sun.castShadow = true; sun.shadow.mapSize.set(4096, 4096);
     Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 10, far: 200 });
@@ -196,7 +238,7 @@ export class TwinScene {
   private buildRacks() {
     const geo = buildRack();
     const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0.55 });
-    const accentMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const accentMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); this.accentMat = accentMat;
     const vals = this.twin.racks.map((r) => r.telemetry[0]?.value ?? NaN).filter((v) => Number.isFinite(v));
     const lo = Math.min(...vals), hi = Math.max(...vals);
     const simpleMat = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.2 });
@@ -499,7 +541,7 @@ export class TwinScene {
     this.exploded = null; this.shadowDirty = true; this.dirty = true; this.updateUnitMarker();
   }
 
-  focusOn(p: Picked) {
+  focusOn(p: Picked, ms = 650) {
     const c = new THREE.Vector3();
     let off: THREE.Vector3;
     if (p.kind === "rack") {
@@ -514,29 +556,34 @@ export class TwinScene {
       new THREE.Box3().setFromObject(m).getSize(size);
       c.copy(m.position); const k = Math.max(size.x, size.z) * 0.9 + 3; off = new THREE.Vector3(k * 0.6, k * 0.45, k);
     }
-    this.moveTo(c, c.clone().add(off));
+    this.moveTo(c, c.clone().add(off), false, ms);
   }
 
-  flyTo(zone: string, instant = false) {
+  flyTo(zone: string, instant = false, ms = 650) {
     const t = this.twin;
     if (zone === "overview") {
       const c = this.center.clone(); c.y = 0;
-      this.moveTo(c, c.clone().add(new THREE.Vector3(48, 62, 74)), instant);
+      this.moveTo(c, c.clone().add(new THREE.Vector3(48, 62, 74)), instant, ms);
     } else if (zone === "plant") {
       const ys = t.equipment.filter((e) => e.system !== "CDU");
       const cx = ys.reduce((a, e) => a + e.display_position.x, 0) / ys.length, cz = ys.reduce((a, e) => a + e.display_position.y, 0) / ys.length;
-      const c = new THREE.Vector3(cx + 8, 0, cz); this.moveTo(c, c.clone().add(new THREE.Vector3(26, 32, 38)), instant);
+      const c = new THREE.Vector3(cx + 8, 0, cz); this.moveTo(c, c.clone().add(new THREE.Vector3(26, 32, 38)), instant, ms);
     } else {
       const h = t.halls.find((x) => x.id === zone);
-      if (h) { const c = new THREE.Vector3(h.x + h.width / 2, 0, h.y + h.depth / 2); this.moveTo(c, c.clone().add(new THREE.Vector3(18, 26, 32)), instant); }
+      if (h) { const c = new THREE.Vector3(h.x + h.width / 2, 0, h.y + h.depth / 2); this.moveTo(c, c.clone().add(new THREE.Vector3(18, 26, 32)), instant, ms); }
     }
   }
 
-  private moveTo(target: THREE.Vector3, position: THREE.Vector3, instant = false) {
+  // public camera move for tours: target and camera offset in world units
+  frameView(target: [number, number, number], offset: [number, number, number], ms = 650) {
+    const t = new THREE.Vector3(...target); this.moveTo(t, t.clone().add(new THREE.Vector3(...offset)), false, ms);
+  }
+
+  private moveTo(target: THREE.Vector3, position: THREE.Vector3, instant = false, ms = 650) {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.dirty = true;
     if (instant || reduce) { this.camera.position.copy(position); this.controls.target.copy(target); this.controls.update(); this.anim = null; return; }
-    this.anim = { t0: performance.now(), from: this.camera.position.clone(), to: position, ft: this.controls.target.clone(), tt: target };
+    this.anim = { t0: performance.now(), dur: ms, from: this.camera.position.clone(), to: position, ft: this.controls.target.clone(), tt: target };
   }
 
   // screen position of an asset, for tests and focus rings
@@ -684,7 +731,7 @@ export class TwinScene {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.loop);
     if (this.anim) {
-      const k = Math.min(1, (performance.now() - this.anim.t0) / 650), e = 1 - Math.pow(1 - k, 3);
+      const k = Math.min(1, (performance.now() - this.anim.t0) / this.anim.dur), e = 1 - Math.pow(1 - k, 3);
       this.camera.position.lerpVectors(this.anim.from, this.anim.to, e);
       this.controls.target.lerpVectors(this.anim.ft, this.anim.tt, e);
       if (k >= 1) this.anim = null;
@@ -705,6 +752,12 @@ export class TwinScene {
     if (!this.dirty) return;
     this.dirty = false;
     this.updateLod();
+    if (this.spot) { this.spot.position.copy(this.camera.position); this.spot.target.position.copy(this.controls.target); }
+    const tl = performance.now();
+    if (tl - this.levelAt > 150) {
+      this.levelAt = tl; const info = this.levelInfo(), key = levelKey(info);
+      if (key !== this.levelKeyLast) { this.levelKeyLast = key; this.onLevel(info); }
+    }
     if (this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; }
     this.renderer.render(this.scene, this.camera); this.renderedFrames++;
   };

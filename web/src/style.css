@@ -169,6 +169,18 @@ label { font-size: var(--text-sec); color: var(--muted); }
 .twin-hud { position: absolute; left: var(--s3); top: var(--s3); display: flex; gap: var(--s2); flex-wrap: wrap; right: var(--s3); pointer-events: none; }
 .twin-hud > * { pointer-events: auto; }
 .twin-foot { position: absolute; left: var(--s3); bottom: var(--s3); right: var(--s3); display: flex; justify-content: space-between; gap: var(--s3); pointer-events: none; color: var(--muted); font-size: var(--text-meta); }
+.twin-info { position: absolute; right: var(--s3); top: 64px; width: min(280px, 52%); display: grid; gap: var(--s2); pointer-events: none; }
+.twin-info > * { pointer-events: auto; background: rgba(13,17,23,0.92); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: var(--s2) var(--s3); font-size: var(--text-sec); }
+.twin-info h3 { margin: 0 0 4px; font-size: var(--text-sec); font-weight: var(--w-semi); }
+.twin-info p { margin: 0; color: var(--muted); }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; margin-bottom: 4px; }
+.crumbs button { min-height: 44px; padding: 0 var(--s2); background: transparent; border: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.crumbs span { color: var(--muted); }
+.level-dots { display: flex; gap: 4px; margin: 4px 0; }
+.level-dots i { height: 4px; flex: 1; border-radius: 2px; background: var(--line-strong); }
+.level-dots i.on { background: var(--accent); }
+.tour-nav { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s2); }
+.twin-vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 50%, transparent 22%, rgba(0,0,0,0.6) 88%); }
 .twin-sim { position: absolute; left: var(--s3); right: var(--s3); bottom: 56px; background: rgba(13,17,23,0.92); border: 1px solid var(--line-strong); border-radius: var(--radius); font-size: var(--text-sec); }
 .twin-sim > summary { min-height: 44px; display: flex; align-items: center; padding: 0 var(--s3); cursor: pointer; font-weight: var(--w-med); }
 .twin-sim .sim-body { display: grid; gap: var(--s2); padding: 0 var(--s3) var(--s3); max-height: 46vh; overflow-y: auto; }
@@ -177,6 +189,12 @@ label { font-size: var(--text-sec); color: var(--muted); }
 .twin-sim input[type="range"] { width: 100%; accent-color: var(--accent); }
 .sim-chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); }
 @media (max-width: 560px) { .sim-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) {
+  .twin-stage { height: 76vh; min-height: 520px; }
+  .twin-info { left: var(--s3); right: var(--s3); top: auto; bottom: 108px; width: auto; }
+  .twin-info > div:first-child { display: none; }
+  .twin-info .tour-nav .btn { min-height: 44px; }
+}
 .sim-chip { border: 1px solid var(--line); border-radius: var(--radius); padding: 2px 8px; background: var(--l1); min-width: 0; }
 .sim-chip span { display: block; color: var(--muted); font-size: var(--text-meta); }
 .sim-chip b { font-weight: var(--w-med); font-variant-numeric: tabular-nums; }

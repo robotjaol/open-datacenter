@@ -4,6 +4,8 @@ import type { Equipment, Hall, ModuleView, Rack } from "../types";
 import type { ColorMode, Layers, Picked, TwinScene } from "../twin3d";
 import { fmtLength } from "../units";
 import { RACK_UNIT_LIST } from "../models/rack-units";
+import { buildTour } from "../tour";
+import { LEVELS, LEVEL_NAME, type LevelInfo } from "../levels";
 import { extremeHour, flowSpeeds, SPEED_CHOICES, snapshot } from "../sim";
 import { chip, fixed, group, h } from "../util";
 
@@ -32,10 +34,10 @@ export function twinModule(ctx: Ctx): ModuleView {
   const linkTag = (id: string) => h("button", { class: "tag", type: "button", title: `Select ${id}`, onClick: () => pick({ kind: id.includes("-R") ? "rack" : "equipment", id }, true) }, id);
   const tagList = (ids: string[]) => ids.length ? h("div", { class: "tags" }, ...ids.map(linkTag)) : null;
 
-  function pick(p: Picked | null, focus = false) {
+  function pick(p: Picked | null, focus = false, ms = 650) {
     selected = p;
     scene?.select(p, false);
-    if (p && focus) scene?.focusOn(p);
+    if (p && focus) scene?.focusOn(p, ms);
     drawInspector(); refreshDims();
   }
 
@@ -132,6 +134,8 @@ export function twinModule(ctx: Ctx): ModuleView {
   const modeBar = h("div", { class: "seg", role: "group", "aria-label": "Rack colour layer" }, ...([["hall", "Hall"], ["telemetry", "Telemetry"], ["neutral", "Neutral"]] as [ColorMode, string][]).map(([m, t]) =>
     h("button", { type: "button", "data-mode": m, "aria-pressed": String(m === mode), onClick: () => setMode(m) }, t)));
   // ---- CAD tools: standard views, projection, section plane, measure, dimension box ----
+  const tourBtn = h("button", { class: "btn", type: "button", onClick: () => { tourAuto = true; runStep(0); } }, "Guided tour: site to unit");
+  const spotBox = h("input", { type: "checkbox", onChange: (e: Event) => setSpot((e.target as HTMLInputElement).checked) }) as HTMLInputElement;
   const cadReadout = h("p", { class: "muted", style: "margin:6px 0 0;font-size:.875rem", "aria-live": "polite" }, "Measure: off");
   const bounds = { x: [Math.min(...twin.halls.map((x) => x.x)), Math.max(...twin.halls.map((x) => x.x + x.width))], y: [0, 4], z: [Math.min(...twin.halls.map((x) => x.y)), Math.max(...twin.halls.map((x) => x.y + x.depth))] } as Record<"x" | "y" | "z", number[]>;
   let sectionAxis: "x" | "y" | "z" | "" = "", measuring = false, dims = false;
@@ -152,7 +156,7 @@ export function twinModule(ctx: Ctx): ModuleView {
   const measBtn = h("button", { class: "btn", type: "button", "aria-pressed": "false", onClick: () => { measuring = !measuring; scene?.setMeasure(measuring); measBtn.setAttribute("aria-pressed", String(measuring)); cadReadout.textContent = measuring ? "Click two points on a surface" : "Measure: off"; } }, "Measure");
   const cadPanel = h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "CAD tools")), h("div", { class: "panel-body", style: "padding:8px;display:grid;gap:8px" },
     h("div", { class: "seg fill", role: "group", "aria-label": "Standard views" }, ...([["plan", "Plan"], ["front", "Front"], ["side", "Side"], ["iso", "Iso"]] as const).map(([v, t]) => h("button", { type: "button", onClick: () => scene?.setView(v) }, t))),
-    projBtn, secSelect, secSlider, measBtn, cadReadout, explodeBtn,
+    tourBtn, h("label", { class: "check" }, spotBox, "Spotlight the camera target"), projBtn, secSelect, secSlider, measBtn, cadReadout, explodeBtn,
     h("label", { class: "check" }, h("input", { type: "checkbox", onChange: (e: Event) => { dims = (e.target as HTMLInputElement).checked; refreshDims(); } }), "Dimension box of selection"), dimReadout));
   // ---- end-to-end simulation over the synthetic hourly table ----
   const hourly = data.hourly;
@@ -198,6 +202,55 @@ export function twinModule(ctx: Ctx): ModuleView {
       h("div", { class: "sim-key" }, h("span", {}, h("i", { style: "background:#ff6b5a" }), "Power A"), h("span", {}, h("i", { style: "background:#5aa9ff" }), "Power B"), h("span", {}, h("i", { style: "background:#38e0f8" }), "Chilled water and CDU supply"), h("span", {}, h("i", { style: "background:#ffb347" }), "Return"),
         h("span", {}, "Generators stand by"), h("span", {}, "Synthetic data. Particle speed is illustrative. Routes are schematic."))));
   applySim(true);
+  // ---- semantic zoom card, spotlight and guided tour ----
+  const levelCard = h("div", { "aria-live": "polite" });
+  const tourCard = h("div", { "aria-live": "polite" });
+  tourCard.hidden = true;
+  const vignette = h("div", { class: "twin-vignette" });
+  vignette.hidden = true;
+  const rowsOf = (hallId: string) => [...new Set(twin.racks.filter((r) => r.hall_id === hallId).map((r) => r.y))].sort((a, b) => a - b);
+  function drawLevel(i: LevelInfo) {
+    const hall = twin.halls.find((x) => x.id === i.hallId), rack = twin.racks.find((r) => r.asset_id === i.rackId);
+    const crumbs: Node[] = [h("button", { type: "button", onClick: () => { pick(null); scene?.flyTo("overview"); zone = "overview"; drawZones(); } }, "Site")];
+    const sep = () => h("span", { "aria-hidden": "true" }, "›");
+    if (hall) crumbs.push(sep(), h("button", { type: "button", onClick: () => { pick(null); scene?.flyTo(hall.id); } }, `Hall ${hall.id}`));
+    if (hall && i.row) crumbs.push(sep(), h("span", {}, `Row ${i.row} of ${i.rows}`));
+    if (rack) crumbs.push(sep(), h("button", { type: "button", onClick: () => pick({ kind: "rack", id: rack.asset_id }, true) }, rack.asset_id));
+    if (rack && i.unit !== undefined) { const u = RACK_UNIT_LIST[i.unit]; crumbs.push(sep(), h("span", {}, u.u === 1 ? `U${u.u0}` : `U${u.u0}-U${u.u0 + u.u - 1}`)); }
+    let detail = "";
+    if (i.level === "site") detail = `${twin.halls.length} halls, ${twin.racks.length} racks, ${group(twin.halls.reduce((a, x) => a + x.design_kw, 0))} kW design IT, plant yard (schematic).`;
+    else if (i.level === "hall" && hall) detail = `${hall.rack_count} racks in ${rowsOf(hall.id).length} rows, ${group(hall.design_kw)} kW design IT, CDUs ${hall.cdu_ids.join(", ")}.`;
+    else if (i.level === "row" && hall && i.row) { const y = rowsOf(hall.id)[i.row - 1], rs = twin.racks.filter((r) => r.hall_id === hall.id && r.y === y); detail = `${rs.length} racks, ${group(rs.reduce((a, r) => a + r.design_kw, 0))} kW design IT, fronts face ${rs[0]?.facing === "-y" ? "north" : "south"}.`; }
+    else if (i.level === "rack" && rack) detail = `${fixed(rack.design_kw, 1)} kW design, ${rack.power_a} and ${rack.power_b}, ${fixed(rack.liquid_design_kw, 1)} kW liquid and ${fixed(rack.air_design_kw, 1)} kW air.`;
+    else if (i.level === "unit" && i.unit !== undefined) { const u = RACK_UNIT_LIST[i.unit]; detail = `${u.label}, ${fixed(u.u * 44.45, 1)} mm. Generic configuration, not source data.`; }
+    levelCard.replaceChildren(h("h3", {}, `Level: ${LEVEL_NAME[i.level]}`), h("div", { class: "crumbs" }, ...crumbs),
+      h("div", { class: "level-dots", "aria-hidden": "true" }, ...LEVELS.map((l) => h("i", { class: l === i.level ? "on" : "" }))), h("p", {}, detail));
+  }
+  const tourSteps = buildTour(twin);
+  let tourAt = -1, tourAuto = true, tourTimer = 0;
+  function setSpot(on: boolean) { scene?.setSpotlight(on); vignette.hidden = !on; spotBox.checked = on; }
+  function runStep(n: number) {
+    clearTimeout(tourTimer);
+    if (!tourSteps.length || n < 0 || n >= tourSteps.length) { stopTour(); return; }
+    tourAt = n; const s = tourSteps[n], a = s.action, ms = 1700;
+    scene?.explode(false); setSpot(s.spotlight);
+    if (a.type === "overview") { pick(null); scene?.flyTo("overview", false, ms); zone = "overview"; drawZones(); }
+    else if (a.type === "hall") { pick(null); scene?.flyTo(a.id, false, ms); zone = a.id; drawZones(); }
+    else if (a.type === "aisle") { pick(null); scene?.frameView([a.x, 1.5, a.y], [7, 3.4, 6], ms); }
+    else if (a.type === "rack") pick({ kind: "rack", id: a.id }, true, ms);
+    else if (a.type === "unit") pick({ kind: "rack", id: a.id, unit: a.unit }, true, ms);
+    else { pick({ kind: "rack", id: a.id, unit: a.unit }, false); scene?.explode(true); syncExplode(true); }
+    tourCard.hidden = false;
+    tourCard.replaceChildren(h("h3", {}, `Tour ${n + 1} of ${tourSteps.length}: ${s.title}`), h("p", {}, s.text),
+      h("div", { class: "tour-nav" }, h("button", { class: "btn", type: "button", disabled: n === 0 ? "" : undefined, onClick: () => runStep(n - 1) }, "Previous"),
+        h("button", { class: "btn", type: "button", onClick: () => { tourAuto = !tourAuto; runStep(n); } }, tourAuto ? "Pause" : "Auto play"),
+        h("button", { class: "btn", type: "button", onClick: () => runStep(n + 1) }, n === tourSteps.length - 1 ? "Finish" : "Next"),
+        h("button", { class: "btn", type: "button", onClick: stopTour }, "Stop")));
+    if (tourAuto && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) tourTimer = window.setTimeout(() => runStep(n + 1), 8500);
+  }
+  function stopTour() {
+    clearTimeout(tourTimer); tourAt = -1; tourCard.hidden = true; scene?.explode(false); syncExplode(false); setSpot(false);
+  }
   const search = h("input", { type: "search", list: "asset-list", placeholder: "Asset ID, e.g. H02-R017", "aria-label": "Find asset by ID", style: "width:100%",
     onChange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim().toUpperCase(); const r = twin.racks.find((x) => x.asset_id === v); const q = twin.equipment.find((x) => x.asset_id === v);
       if (r) pick({ kind: "rack", id: r.asset_id }, true); else if (q) pick({ kind: "equipment", id: q.asset_id }, true); } });
@@ -206,7 +259,7 @@ export function twinModule(ctx: Ctx): ModuleView {
   const stage = h("div", { class: "twin-stage" }, canvas,
     h("div", { class: "twin-hud" }, h("button", { class: "btn", type: "button", onClick: () => { scene?.flyTo("overview"); zone = "overview"; drawZones(); } }, "Reset camera"), modeBar,
       h("button", { class: "btn", type: "button", onClick: () => pick(null) }, "Clear selection")),
-    h("div", { class: "twin-foot" }, h("span", {}, "Drag orbit. Scroll zoom. Right-drag pan. Click to inspect."), h("span", {}, "Plant positions are schematic. LED rate follows synthetic telemetry.")), hoverTip, simPanel);
+    h("div", { class: "twin-foot" }, h("span", {}, "Drag orbit. Scroll zoom. Right-drag pan. Click to inspect."), h("span", {}, "Plant positions are schematic. LED rate follows synthetic telemetry.")), hoverTip, vignette, h("div", { class: "twin-info" }, levelCard, tourCard), simPanel);
   const el = h("div", { class: "stack" },
     h("div", { class: "page-head" }, h("p", { class: "pattern" }, "Split pane"), h("h1", {}, "Facility Digital Twin"),
       h("p", {}, "Browser view of the rack layout from the Python geometry module, linked to equipment records by asset ID. Telemetry is a synthetic offline example, not a live feed. The source OpenUSD is rack-only massing, not a facility BIM model.")),
@@ -233,17 +286,19 @@ export function twinModule(ctx: Ctx): ModuleView {
       stage.replaceChildren(h("p", { class: "error", style: "margin:16px" }, `3D view could not start: ${(e as Error).message}. WebGL is required. Use the asset list and inspector instead.`));
       return;
     }
+    scene.onLevel = drawLevel; drawLevel(scene.levelInfo());
     scene.onSelect = (p) => { selected = p; drawInspector(); refreshDims(); };
     scene.onMeasure = (m, pending) => { cadReadout.textContent = m ? `${fmtLength(m.distance)} (dx ${fmtLength(m.dx)}, dy ${fmtLength(m.dy)}, dz ${fmtLength(m.dz)})` : pending ? "Click the second point" : measuring ? "Click two points on a surface" : "Measure: off"; };
     scene.onHover = (id, x, y) => { if (!id) { hoverTip.hidden = true; return; } hoverTip.hidden = false; hoverTip.textContent = id; hoverTip.style.left = `${x + 14}px`; hoverTip.style.top = `${y + 14}px`; };
     legend();
     (window as any).__twin = { select: (id: string) => { const r = twin.racks.find((x) => x.asset_id === id); pick(r ? { kind: "rack", id } : { kind: "equipment", id }, true); },
       screenOf: (id: string) => scene!.screenOf(id), selected: () => selected, flyTo: (z: string) => scene!.flyTo(z, true), setMode, layers: (l: Partial<Layers>) => { Object.assign(layers, l); scene!.setLayers(layers); },
+      tour: { start: () => { tourAuto = false; runStep(0); }, step: (n: number) => runStep(n), stop: stopTour, at: () => tourAt }, spot: (on: boolean) => setSpot(on), level: () => levelCard.textContent,
       sim: { play: (on: boolean) => setPlaying(on), hour: (n: number) => { simHour = n; applySim(true); }, count: () => scene!.flowCount },
       stats: () => ({ frames: scene!.renderedFrames, calls: scene!.renderer.info.render.calls, triangles: scene!.renderer.info.render.triangles }),
       cad: { setView: (v: any) => scene!.setView(v), ortho: (o: boolean) => scene!.setProjection(o), section: (a: any, o: number) => scene!.setSection(a, o), dims: (on: boolean) => scene!.showDimensions(on), measure: (on: boolean) => scene!.setMeasure(on) },
       look: (p: number[], t: number[]) => { scene!.camera.position.set(p[0], p[1], p[2]); scene!.controls.target.set(t[0], t[1], t[2]); scene!.controls.update(); scene!.invalidate(); } };
-    dispose = () => { gone = true; cancelAnimationFrame(simRaf); scene?.dispose(); delete (window as any).__twin; };
+    dispose = () => { gone = true; cancelAnimationFrame(simRaf); clearTimeout(tourTimer); scene?.dispose(); delete (window as any).__twin; };
   });
   return { el, dispose: () => dispose?.() };
 }
