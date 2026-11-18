@@ -1,18 +1,47 @@
 # Open Data Center Facility
 
-**A reproducible, building-only data center engineering portfolio.**
+**A reproducible 5 MW data center concept study, now with an interactive digital twin that runs the real Python model.**
 
-From investment assumptions to equipment capacity, energy, asset identities and commissioning evidence: one scenario drives the complete concept study. Created by **Jonathan Oktaviano** for public engineering learning and contribution.
+Created by **Jonathan Oktaviano** for public engineering learning and contribution.
 
-![Original hall concept](artifacts/reference/hall-layout.svg)
+![Facility Digital Twin: halls, racks and plant in 3D with the equipment inspector](assets/screenshots/facility-digital-twin.png)
 
-**Reference:** 5 MW design IT · four halls · 200 racks · A/B electrical paths · air and liquid cooling · synthetic tropical climate.
+## 1. Status and honest scope
 
-This is an independent portfolio, with no affiliation, endorsement or proprietary design from AWS or any other hyperscaler. Its maturity is **concept engineering**. It is not a certified facility design, coordinated BIM model, construction package, or validated CFD result.
+Maturity: **concept engineering**. This is not a certified facility design, not a BIM model, not CFD, and not an operational digital twin. Weather, load, tariffs, costs and telemetry are synthetic or illustrative. The project is independent and has no affiliation with AWS or any other hyperscaler. The reference result is kept as computed: NPV is slightly negative (about -0.33 M USD).
 
-## Start in two minutes
+## 2. The reference facility
 
-Python 3.11 or later; no runtime dependencies. Run from this repository's root:
+5 MW design IT, four halls, 200 racks at 25 kW, A and B electrical paths, air and liquid cooling, synthetic tropical climate, 15 year pre-tax unlevered finance.
+
+## 3. What is new: the interactive digital twin
+
+A browser interface with ten modules. Python stays the only calculation engine; the browser draws and formats.
+
+| Module | What you can do |
+| --- | --- |
+| Executive Overview | Read 17 KPIs, each with provenance and a source pointer |
+| Facility Digital Twin | Orbit the 3D halls, click a rack or equipment block, read its asset ID, relations and synthetic telemetry |
+| Electrical | Follow the single line diagram, check N+1 utilisation |
+| Mechanical and Cooling | Cooling flow, COP against ambient, daily profile |
+| Energy and Sustainability | Hour, day, month and year views of power, PUE, carbon, PV |
+| Reliability and Capacity | Availability interval, FMEA, maintenance matrix, offline cases |
+| Financial Analysis | Cash flow, components, NPV sensitivity, CSV export |
+| Scenario Explorer | Change 19 parameters, run the real model, compare with baseline, export CSV or JSON |
+| Engineering Documentation | Browse the repository documents |
+| Project Information | Scope, maturity and limits |
+
+## 4. Quick start
+
+Requires Python 3.11 or newer and Node 22 or newer.
+
+```bash
+python -m dcf.cli web-data          # export the data contract
+cd web && npm ci && npm run build   # build the interface
+cd .. && python -m dcf.cli serve    # open http://127.0.0.1:8765
+```
+
+The Python only workflow still works with no dependencies:
 
 ```bash
 python -m dcf.cli validate
@@ -21,9 +50,64 @@ python -m unittest discover -s tests -v
 python scripts/verify_repository.py
 ```
 
-Windows users can substitute `py -3` for `python`. Installing the package is optional: `python -m pip install -e .`, then `dcf run`. Commands assume the repository root as working directory.
+Windows users can substitute `py -3` for `python`.
 
-## Review the work
+## 5. Screenshots
+
+Captured from the running application at 1440 by 900 with a software renderer.
+
+| | |
+| --- | --- |
+| ![Executive Overview](assets/screenshots/executive-overview.png) | ![Equipment inspector for rack H02-R017](assets/screenshots/equipment-inspector.png) |
+| Executive Overview | Rack inspector, asset ID H02-R017 |
+| ![Electrical infrastructure](assets/screenshots/electrical-infrastructure.png) | ![Mechanical and cooling](assets/screenshots/mechanical-cooling.png) |
+| Electrical | Mechanical and Cooling |
+| ![Energy and sustainability](assets/screenshots/energy-sustainability.png) | ![Reliability and capacity](assets/screenshots/reliability-capacity.png) |
+| Energy and Sustainability | Reliability and Capacity |
+| ![Financial analysis](assets/screenshots/financial-analysis.png) | ![Scenario explorer](assets/screenshots/scenario-explorer.png) |
+| Financial Analysis | Scenario Explorer, dense racks 35 kW preset |
+
+Responsive captures at 1920, 1440, 1366, 768 and 390 pixels wide are in `assets/screenshots/responsive/`.
+
+## 6. Scenario Explorer
+
+Presets and sliders map to a whitelist in `dcf/scenario.py`. Every change is validated by the same `dcf.config.validate` that checks the reference. The result shows both columns from the Python model, the config digest and run time. The reference configuration is never written. Known limit: CAPEX is a fixed input, so a dense rack scenario raises IT energy by 40 percent without changing CAPEX.
+
+## 7. Architecture
+
+```text
+configs/*.json -> dcf (Python) -> artifacts/reference (SHA-256) -> dcf.webdata -> build/web-data/*.json -> web/
+                                        POST /api/scenario/run -> dcf.scenario (live run) ^
+```
+
+Details and the contract: [docs/architecture/data-flow.md](docs/architecture/data-flow.md).
+
+## 8. Data provenance
+
+Four classes: design, modeled, simulated, financial. Every value carries a synthetic flag. Chips show provenance with shape and text. Telemetry shows value, timestamp, source, quality and a synthetic flag.
+
+## 9. Verification
+
+| Check | Result |
+| --- | --- |
+| Python unit tests | 45 passed |
+| `scripts/verify_repository.py` | PASS |
+| TypeScript strict, ESLint | 0 errors |
+| Frontend tests | 22 passed |
+| Production build | exit 0 |
+| Browser sweep, 10 routes, no console errors | passed |
+| Horizontal overflow, 7 widths by 10 routes | 0 |
+
+Not yet verified: remote GitHub Actions, real GPU, screen readers, Firefox and Safari. See [docs/validation/final-acceptance-report.md](docs/validation/final-acceptance-report.md).
+
+## 10. Limitations
+
+- Plant positions in 3D are schematic; only racks come from source geometry.
+- OpenUSD and DXF are rack massing, not facility BIM.
+- Scenario CAPEX is fixed; PV scenarios carry no PV investment.
+- The scenario module needs the local Python server.
+
+## 11. Review the work
 
 | Audience | Entry point |
 |---|---|
@@ -34,17 +118,24 @@ Windows users can substitute `py -3` for `python`. Installing the package is opt
 | Operator | [Commissioning plan](15_commissioning/commissioning-plan.md), [operations handbook](16_operations/README.md) |
 | Contributor | [Contributing](CONTRIBUTING.md), [architecture](ARCHITECTURE.md), [maturity map](docs/maturity.md), [PDF publication style](docs/publication-style.md) |
 
-## What runs today
+## 12. What runs today
 
 - Validated capacity and conservative per-path N+1 screening for UPS, transformers, generators, chillers and CDUs; battery and BESS energy allowances.
-- Reproducible 8,760-hour power/thermal balance, monthly tariffs, energy-weighted PUE, direct-site WUE, grid-carbon and optional PV self-consumption.
-- Fifteen-year, pre-tax, unlevered facility cash flows, CAPEX/OPEX, NPV, conventional IRR, gross lifecycle cost and nine sensitivity cases.
+- Reproducible 8,760-hour power and thermal balance, monthly tariffs, energy-weighted PUE, direct-site WUE, grid carbon and optional PV self-consumption.
+- Fifteen-year, pre-tax, unlevered facility cash flows, CAPEX and OPEX, NPV, conventional IRR, gross lifecycle cost and nine sensitivity cases.
 - Eligibility-gated site ranking, analytical and seeded Monte Carlo availability, six offline supervisory scenarios.
-- Original SVG/DXF rack layout, OpenUSD rack massing, matching asset schedule and synthetic telemetry.
+- Original SVG and DXF rack layout, OpenUSD rack massing, matching asset schedule and synthetic telemetry.
+- The interactive digital twin described above.
 
-The workbook is an editable companion for design sizing and financial analysis. Its imported occupancy-specific energy results are clearly identified; use Python to regenerate them after changing physical assumptions.
+## 13. Documentation
 
-## Repository map
+Index: [docs/README.md](docs/README.md). Audit: [docs/audit/](docs/audit/). Claim to evidence table: [documentation-traceability.csv](docs/audit/documentation-traceability.csv).
+
+## 14. Roadmap
+
+Scenario CAPEX scaling needs an owner decision on the cost model. A static demo without Python would need precomputed scenarios. Live telemetry, BIM plant geometry and CFD are outside this concept stage.
+
+## 15. Repository map
 
 ```text
 00_executive/          Charter, investment memo, concept feasibility
@@ -76,4 +167,10 @@ deliverables/        Portfolio PDF and editable workbook
 docs/ scripts/       Methods, contribution workflow and verification
 ```
 
-Read the [Getting Started guide](docs/GETTING-STARTED.md). Original project material is released under [MIT](LICENSE); upstream works retain their own terms. No vendor logos, drawings or proprietary standards are included.
+## 16. Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](ARCHITECTURE.md) and [governance](GOVERNANCE.md). Run the checks in section 4 and section 9 before opening a pull request.
+
+## 17. License
+
+Original project material is released under [MIT](LICENSE); upstream works retain their own terms. No vendor logos, drawings or proprietary standards are included. Citation: [CITATION.cff](CITATION.cff).

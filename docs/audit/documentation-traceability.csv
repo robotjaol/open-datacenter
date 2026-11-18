@@ -1,0 +1,18 @@
+claim,source file,calculation or evidence,validation status
+Annual PUE is 1.347,artifacts/reference/report.json,energy.pue = facility kWh / IT kWh,verified by tests/test_webdata.py test_reference_matches_live_model and web/tests/contract.test.ts
+Reference NPV is slightly negative (-0.33 M USD),artifacts/reference/report.json,finance.npv_usd,verified by web/tests/contract.test.ts
+Initial CAPEX is 57.6 M USD,artifacts/reference/report.json,finance.capex_usd,verified by web/tests/contract.test.ts
+Facility has 200 racks and 40 plant items,artifacts/reference/rack-assets.csv and equipment-schedule.csv,row counts,verified by web/tests/contract.test.ts and test_twin_identity_matches_artifacts
+Every KPI traces to a source,dcf/webdata.py,resolve() follows each source pointer,verified by test_every_kpi_traces_to_a_source
+Telemetry is synthetic,artifacts/reference/telemetry-sample.json,quality and synthetic flag on every record,verified by test_telemetry_is_marked_synthetic
+Hourly columns reconcile with annual energy,artifacts/reference/hourly-energy.csv,column sums vs report energy,verified by test_hourly_columns_reconcile_with_energy
+Annual energy balance closes,dcf/webdata.py derived_block,facility = grid + PV used,verified by test_annual_energy_balance_closes
+Monthly carbon sums to annual,dcf/webdata.py derived_block,sum of 12 months vs annual,verified by test_monthly_carbon_sums_to_annual
+Tampered artifacts are rejected,artifacts/reference/manifest.json,SHA-256 check in from_reference,verified by test_tampered_artifact_is_rejected
+Scenario cannot set unknown or out of range values,dcf/scenario.py,whitelist and dcf.config.validate,verified by test_unknown_key_is_rejected and test_bool_nan_and_range_are_rejected
+Scenario runs do not change the reference,dcf/server.py,reference files hashed before and after,verified by test_reference_files_are_unchanged_after_runs
+API refuses path traversal,dcf/server.py,static path resolution,verified by test_path_traversal_is_refused
+Dense racks scenario does not change CAPEX,dcf/finance.py,base_capex_usd is a fixed input,observed in a live run (CAPEX 57.60 M both columns); documented as a limitation
+Plant positions are schematic,dcf/webdata.py plant_positions,source geometry places racks only,design decision; stated in the UI and docs/digital-twin
+Page has no horizontal overflow at 7 widths,web/src/style.css,scrollWidth <= clientWidth on 10 routes,verified by headless Chrome sweep (docs/validation/final-acceptance-report.md)
+Remote CI passes,.github/workflows/ci.yml,not run,not verified

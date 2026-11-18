@@ -153,3 +153,16 @@ class Derived(unittest.TestCase):
         self.assertEqual(tables["fmea"][0]["id"], "F01")
         total = sum(float(r["usd"]) for r in tables["cost_allowances"])
         self.assertEqual(total, self.ref["core"]["config"]["base_capex_usd"])
+
+
+class Checks(unittest.TestCase):
+    def test_n_plus_one_checks_pass_and_have_utilisation(self):
+        ref = webdata.from_reference(ROOT / "configs/tropical-5mw.json", REF)
+        checks = ref["core"]["derived"]["n_plus_one_checks"]
+        self.assertEqual({c["key"] for c in checks}, {"ups_per_path_kw", "transformers_per_path_kva",
+                                                      "generators_per_path_kw", "chillers_shared_kwth",
+                                                      "cdus_per_hall_kwth"})
+        for check in checks:
+            self.assertTrue(check["passes"])
+            self.assertAlmostEqual(check["utilisation_after_loss"], check["required"] / check["remaining_capacity_after_one_loss"])
+            self.assertLessEqual(check["utilisation_after_loss"], 1)

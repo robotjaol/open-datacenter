@@ -80,7 +80,9 @@ def compare(baseline_kpis: list[dict], scenario_kpis: list[dict]) -> list[dict]:
             continue
         a, b = base[kpi["id"]]["value"], kpi["value"]
         delta = None if a is None or b is None else b - a
-        percent = None if delta is None or a == 0 else delta / abs(a)
+        # percent is not meaningful across a sign change
+        crosses_zero = a is not None and b is not None and a * b < 0
+        percent = None if delta is None or a == 0 or crosses_zero else delta / abs(a)
         rows.append({"id": kpi["id"], "label": kpi["label"], "unit": kpi["unit"], "baseline": a,
                      "scenario": b, "delta": delta, "delta_pct": percent})
     return rows

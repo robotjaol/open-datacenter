@@ -25,3 +25,7 @@ No row claims construction readiness. All local law, jurisdiction, climatic desi
 **v0.3 — coordinated design:** IFC/BIM authoring, site massing, protection studies, hydraulic model and validated CFD case. Each integration needs solver version, input digest, convergence evidence and deviations.
 
 **v0.4 — lifecycle finance and operations:** construction draw schedule, debt/tax/working-capital options, event-based reliability and read-only historian connector with data-quality tests.
+
+## Interactive digital twin (added)
+
+The web interface is a design time visual model with simulated and synthetic data. It is not an operational digital twin, not certified engineering, not a BIM model and not CFD. Details: [digital-twin/maturity-and-limits.md](digital-twin/maturity-and-limits.md).

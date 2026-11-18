@@ -187,6 +187,17 @@ BALANCE_PARTS = {"it_kw": "it", "distribution_loss_kw": "distribution_loss", "up
                  "other_kw": "other_facility", "transformer_loss_kw": "transformer_loss"}
 
 
+def n_plus_one_checks(sizing: dict) -> list[dict]:
+    checks = []
+    for key in SIZING_KEYS.values():
+        group = sizing[key]
+        remaining = group["remaining_capacity_after_one_loss"]
+        checks.append({"key": key, **group,
+                       "passes": group["installed_units"] == 0 or remaining >= group["required"],
+                       "utilisation_after_loss": group["required"] / remaining if remaining else None})
+    return checks
+
+
 def derived_block(c: dict, report: dict, rows: list[dict]) -> dict:
     balance = {name: sum(float(r[col]) for r in rows) for col, name in BALANCE_PARTS.items()}
     design = report["sizing"]["design_balance"]
@@ -194,6 +205,7 @@ def derived_block(c: dict, report: dict, rows: list[dict]) -> dict:
     return {"annual_energy_balance_kwh": balance,
             "monthly_grid_tco2e": [m["grid_kwh"] * factor / 1000 for m in report["energy"]["monthly"]],
             "design_heat_rejection_kwth": design["cooling_kwth"] + design["compressor_kw"],
+            "n_plus_one_checks": n_plus_one_checks(report["sizing"]),
             "basis": "Sums and unit conversions of model outputs; no new engineering calculation."}
 
 
