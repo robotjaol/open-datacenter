@@ -90,6 +90,16 @@ The 3D view uses original procedural models, not scans and not vendor files. A r
 
 NVIDIA SimReady and DSX assets are **not included**. The DSX sample data is licensed for evaluation only and is not for production use, so it must not be committed to this MIT repository. To use your own GLB files, put `rack.glb`, `ups.glb`, `tx.glb`, `gen.glb`, `chl.glb` or `cdu.glb` in `web/public/models/` (git ignored). They replace the generic models when the server finds them. Only geometry and base colours are used; convert OpenUSD to GLB yourself and check each asset licence.
 
+### 7b. Inspect from site to component
+
+The twin can be read at five levels: site, hall, row, rack and rack unit. A level card shows the breadcrumb and one line of facts for the current zoom, and a six step guided tour (button "Guided tour: site to unit") flies from the whole site to a 4U server and then explodes the rack. CAD tools: plan, front, side and iso views, an orthographic toggle, a section plane, a two point measure tool and a dimension box. An hour slider drives an end-to-end simulation over the synthetic 8,760 hour data, with power A and B and chilled water flows shown as particles on schematic routes. An optional spotlight follows the camera target. Rack unit contents are a generic configuration, not source data, and particle speed is illustrative.
+
+![Guided tour at rack level with spotlight, level card and CAD tools](assets/screenshots/model-tour-spotlight.png)
+
+![Exploded rack](assets/screenshots/model-rack-exploded.png)
+
+![Energy flows](assets/screenshots/model-energy-flows.png)
+
 ## 8. Data provenance
 
 Four classes: design, modeled, simulated, financial. Every value carries a synthetic flag. Chips show provenance with shape and text. Telemetry shows value, timestamp, source, quality and a synthetic flag.
