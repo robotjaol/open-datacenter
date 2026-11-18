@@ -1,0 +1,8 @@
+# keep hashed artifacts byte-identical on every OS
+* text=auto eol=lf
+*.png binary
+*.glb binary
+*.xlsx binary
+*.pdf binary
+*.docx binary
+*.zip binary
