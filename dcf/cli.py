@@ -15,6 +15,7 @@ from .reliability import evaluate
 from .controls import commission
 from .geometry import write_geometry
 from .site import rank
+from .assets import equipment_rows, telemetry_rows
 
 def write_json(path: Path, obj):
     path.write_text(json.dumps(obj, indent=2, allow_nan=False)+"\n", encoding="utf-8")
@@ -53,22 +54,9 @@ def run(config_path: Path, out: Path, site_path: Path) -> dict:
     write_csv(out/"site-ranking.csv", sites)
     racks = write_geometry(c, out)
     write_csv(out/"rack-assets.csv", racks)
-    groups = [("UPS", "ups_per_path_kw", "kW", ["A", "B"]),
-              ("TX", "transformers_per_path_kva", "kVA", ["A", "B"]),
-              ("GEN", "generators_per_path_kw", "kW", ["A", "B"]),
-              ("CHL", "chillers_shared_kwth", "kWth", ["SHARED"]),
-              ("CDU", "cdus_per_hall_kwth", "kWth", [f"H{h+1:02}" for h in range(c["halls"])])]
-    equipment = []
-    for kind, key, unit, paths in groups:
-        for path in paths:
-            for n in range(sizing[key]["installed_units"]):
-                equipment.append({"asset_id": f"{kind}-{path}-{n+1:02}", "system": kind, "path": path,
-                                  "nameplate": sizing[key]["unit_rating"], "unit": unit,
-                                  "derating": sizing[key]["derating"], "status": "concept allowance"})
+    equipment = equipment_rows(c, sizing)
     write_csv(out/"equipment-schedule.csv", equipment)
-    telemetry = [{"timestamp": "2025-01-01T00:00:00+07:00", "asset_id": r["asset_id"],
-                  "metric": "active_power_kw", "value": c["rack_kw"]*c["mean_draw_fraction"],
-                  "unit": "kW", "quality": "synthetic", "source": "offline-example"} for r in racks]
+    telemetry = telemetry_rows(c, racks)
     write_json(out/"telemetry-sample.json", telemetry)
     # Hash generated evidence (not the manifest itself); no nondeterministic timestamps.
     names = ["report.json", "scenario.json", "commissioning-results.json", "hourly-energy.csv", "monthly-energy.csv",
@@ -88,10 +76,34 @@ def main(argv=None) -> int:
             cmd.add_argument("--output", type=Path, default=Path("build/reference"))
             cmd.add_argument("--sites", type=Path, default=Path("data/site-candidates.csv"))
     sub.add_parser("schema")
+    export = sub.add_parser("web-data")
+    export.add_argument("--config", type=Path, default=Path("configs/tropical-5mw.json"))
+    export.add_argument("--reference", type=Path, default=Path("artifacts/reference"))
+    export.add_argument("--output", type=Path, default=Path("build/web-data"))
+    serve = sub.add_parser("serve")
+    serve.add_argument("--config", type=Path, default=Path("configs/tropical-5mw.json"))
+    serve.add_argument("--sites", type=Path, default=Path("data/site-candidates.csv"))
+    serve.add_argument("--data", type=Path, default=Path("build/web-data"))
+    serve.add_argument("--web", type=Path, default=Path("web/dist"))
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
     try:
         if args.command == "schema":
             print(json.dumps(schema(), indent=2))
+        elif args.command == "web-data":
+            from . import webdata
+            payload = webdata.from_reference(args.config, args.reference)
+            webdata.export(payload, args.output, Path.cwd())
+            print(f"Created web data in {args.output.resolve()}")
+        elif args.command == "serve":
+            from .server import make_server
+            httpd = make_server(args.host, args.port, args.config, args.sites, args.data, args.web)
+            print(f"Serving http://{args.host}:{httpd.server_address[1]}  (Ctrl+C to stop)")
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                print("Stopped")
         elif args.command == "validate":
             c = load(args.config)
             print(f"VALID: {c['name']} ({c['it_kw']:,.0f} kW design IT)")
