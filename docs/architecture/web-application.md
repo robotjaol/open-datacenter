@@ -23,6 +23,8 @@ Models (`web/src/models/`): `kit.ts` merges boxes and cylinders into one vertex 
 
 Rack LEDs (`leds.ts`): one status LED per rack unit, drawn by a small shader so the blink costs one uniform update, not a per-instance rewrite. Blink rate per rack follows the synthetic rack telemetry, normalised between the lowest and highest value, between 0.6 and 2.4 Hz (under 3 flashes per second). The LEDs are an illustration of load, not a real status signal, and show only at full and medium detail. Redraws are limited to about 20 per second while LEDs are visible. With `prefers-reduced-motion` the LEDs stay on and nothing animates. The Rack LEDs layer toggle hides them.
 
+CAD tools (`cad.ts`, panel "CAD tools" beside the 3D view): standard views (plan, front, side, iso) keep the current target and distance. Orthographic mode uses a 4 degree field of view with the camera moved back by tan(21 deg)/tan(2 deg), which gives a parallel projection to within 0.1 percent while keeping the same camera object and LOD thresholds (distances are scaled back). A section plane clips the whole scene along X, Y or Z with a slider; models are surface shells without caps, so a cut rack shows its hollow inside, and the rack LEDs are hidden while a section is on because their shader is not clipped. The measure tool takes two surface points (ground plane as fallback) and reports the distance and its X, Y and Z parts. The dimension box draws the bounding box of the selected rack, hall or equipment and shows width, depth and height. Rack size comes from the data contract; equipment size is the generic model bounding box.
+
 Test hook: `window.__twin` exposes `select`, `screenOf`, `selected`, `flyTo` for browser checks.
 
 ## 3D performance (measured)

@@ -66,6 +66,9 @@ main { width: 100%; max-width: var(--vp-wide); margin-inline: auto; padding: var
 .seg button:last-child { border-right: 0; }
 .seg button[aria-pressed="true"] { background: var(--l3); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
 .seg button:hover { color: var(--text); }
+.seg.fill { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.seg.fill button { padding: 0 var(--s2); }
+.btn[aria-pressed="true"] { background: var(--l3); box-shadow: inset 0 -2px 0 var(--accent); }
 select, input[type="number"], input[type="text"], input[type="search"] { min-height: 44px; background: var(--l0); color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 0 var(--s3); font: inherit; font-size: var(--text-sec); }
 select:hover, input:hover { border-color: rgba(255,255,255,0.28); }
 input[type="range"] { accent-color: var(--accent); width: 100%; min-height: 32px; }

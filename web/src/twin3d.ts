@@ -5,6 +5,7 @@ import type { Equipment, Rack, Twin } from "./types";
 import { buildRack } from "./models/rack";
 import { buildContainment } from "./models/containment";
 import { ledGeometry, ledMaterial } from "./leds";
+import { fmtLength, measure, Measurement, ORTHO_FOV, orthoScale, PERSPECTIVE_FOV, sectionPlane, SectionAxis, ViewName, VIEW_DIRECTION } from "./cad";
 import { buildTray } from "./models/tray";
 import { buildPlant } from "./models/plant";
 import { availableModels, loadExternal } from "./models/external";
@@ -81,6 +82,15 @@ export class TwinScene {
   private anim: { t0: number; from: THREE.Vector3; to: THREE.Vector3; ft: THREE.Vector3; tt: THREE.Vector3 } | null = null;
   private selected: Picked | null = null;
   private resize: ResizeObserver;
+  // CAD state
+  private ortho = false;
+  private lodScale = 1;
+  private sectionOn = false;
+  private measuring = false;
+  private measurePoints: THREE.Vector3[] = [];
+  private measureGroup = new THREE.Group();
+  private dimBox: THREE.Box3Helper | null = null;
+  onMeasure: (m: Measurement | null, pending: boolean) => void = () => {};
   onSelect: (p: Picked | null) => void = () => {};
   onHover: (id: string | null, x: number, y: number) => void = () => {};
 
@@ -111,7 +121,7 @@ export class TwinScene {
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshBasicMaterial({ color: 0x0d1117 }));
     ground.rotation.x = -Math.PI / 2; ground.position.set(this.center.x, -0.02, this.center.z); this.scene.add(ground);
     const grid = new THREE.GridHelper(200, 40, 0x26303b, 0x171d25); grid.position.set(this.center.x, 0, this.center.z); this.scene.add(grid);
-    this.scene.add(this.hallGroup, this.labelGroup, this.lines, this.trays, this.aisleGroup);
+    this.scene.add(this.hallGroup, this.labelGroup, this.lines, this.trays, this.aisleGroup, this.measureGroup);
     this.buildHalls();
     this.buildRacks();
     this.buildTrays();
@@ -269,13 +279,13 @@ export class TwinScene {
   // swap between the box stand-in and the full rack model by distance
   private updateLod() {
     for (const s of this.rackSets) {
-      const d = this.camera.position.distanceTo(s.center), full = d < DETAIL_DISTANCE, mid = !full && d < MID_DISTANCE;
+      const d = this.camera.position.distanceTo(s.center) * this.lodScale, full = d < DETAIL_DISTANCE, mid = !full && d < MID_DISTANCE;
       s.body.visible = this.racksVisible && full; s.mid.visible = this.racksVisible && mid;
-      s.accent.visible = this.racksVisible && (full || mid); s.led.visible = this.ledsOn && this.racksVisible && (full || mid); s.simple.visible = this.racksVisible && !full && !mid;
+      s.accent.visible = this.racksVisible && (full || mid); s.led.visible = this.ledsOn && !this.sectionOn && this.racksVisible && (full || mid); s.simple.visible = this.racksVisible && !full && !mid;
       if (s.trays) s.trays.visible = this.racksVisible && (full || mid);
     }
     // labels are fixed in world size, so hide them when the camera is close
-    for (const t of this.labelGroup.children) t.visible = this.camera.position.distanceTo(t.position) > 30;
+    for (const t of this.labelGroup.children) t.visible = this.camera.position.distanceTo(t.position) * this.lodScale > 30;
   }
 
   private buildEquipment() {
@@ -471,9 +481,95 @@ export class TwinScene {
     return { kind: hit.object.userData.kind, id: hit.object.userData.id };
   }
 
+  // ---- CAD tools ----
+  setView(name: ViewName) {
+    const target = this.controls.target.clone(), dist = this.camera.position.distanceTo(target);
+    this.moveTo(target, target.clone().addScaledVector(VIEW_DIRECTION[name], dist));
+  }
+
+  setProjection(ortho: boolean) {
+    if (ortho === this.ortho) return;
+    const target = this.controls.target, dir = this.camera.position.clone().sub(target), k = orthoScale(PERSPECTIVE_FOV, ORTHO_FOV);
+    this.ortho = ortho; this.lodScale = ortho ? 1 / k : 1;
+    this.camera.fov = ortho ? ORTHO_FOV : PERSPECTIVE_FOV;
+    this.camera.near = ortho ? 0.5 * k : 0.5; this.camera.far = ortho ? 600 * k : 600;
+    this.controls.minDistance = ortho ? 1.2 * k : 1.2; this.controls.maxDistance = ortho ? 220 * k : 220;
+    this.camera.position.copy(target).addScaledVector(dir, ortho ? k : 1 / k);
+    this.camera.updateProjectionMatrix(); this.controls.update(); this.dirty = true;
+  }
+  get isOrtho() { return this.ortho; }
+
+  // section plane through the model; null removes it. LEDs are hidden while it is on because their shader is not clipped.
+  setSection(axis: SectionAxis | null, offset = 0) {
+    this.sectionOn = axis !== null;
+    this.renderer.clippingPlanes = axis ? [sectionPlane(axis, offset)] : [];
+    this.dirty = true; this.shadowDirty = true;
+  }
+
+  setMeasure(on: boolean) {
+    this.measuring = on; this.canvas.style.cursor = on ? "crosshair" : "grab";
+    if (!on) this.clearMeasure();
+  }
+
+  clearMeasure() {
+    this.measurePoints = [];
+    for (const c of [...this.measureGroup.children]) { this.measureGroup.remove(c); (c as THREE.Mesh).geometry?.dispose?.(); }
+    this.onMeasure(null, false); this.dirty = true;
+  }
+
+  private surfacePoint(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.canvas.getBoundingClientRect();
+    this.ray.set(((clientX - rect.left) / rect.width) * 2 - 1, -(((clientY - rect.top) / rect.height) * 2 - 1));
+    this.raycaster.setFromCamera(this.ray, this.camera);
+    const targets: THREE.Object3D[] = [];
+    for (const st of this.rackSets) for (const im of [st.simple, st.mid, st.body]) if (im.visible) targets.push(im);
+    for (const m of this.equipMeshes.values()) if (m.visible) targets.push(m);
+    for (const f of this.hallFloors.values()) targets.push(f);
+    const hit = this.raycaster.intersectObjects(targets, false)[0];
+    if (hit) return hit.point.clone();
+    const p = new THREE.Vector3();
+    return this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), p) ? p : null;
+  }
+
+  private addMeasurePoint(p: THREE.Vector3) {
+    if (this.measurePoints.length >= 2) this.clearMeasure();
+    this.measurePoints.push(p);
+    const r = this.ortho ? 0.12 : 0.06;
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(r * Math.max(1, this.camera.position.distanceTo(p) / 12), 12, 8), new THREE.MeshBasicMaterial({ color: 0xffd23f, depthTest: false }));
+    dot.position.copy(p); dot.renderOrder = 10; this.measureGroup.add(dot);
+    if (this.measurePoints.length === 2) {
+      const [a, b] = this.measurePoints;
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color: 0xffd23f, depthTest: false }));
+      line.renderOrder = 10; this.measureGroup.add(line);
+      this.onMeasure(measure(a, b), false);
+    } else this.onMeasure(null, true);
+    this.dirty = true;
+  }
+
+  // world position of the midpoint of the active measurement on screen, for the label
+  measureLabelAt(): { x: number; y: number } | null {
+    if (this.measurePoints.length < 2) return null;
+    const v = this.measurePoints[0].clone().add(this.measurePoints[1]).multiplyScalar(0.5).project(this.camera);
+    return { x: ((v.x + 1) / 2) * this.canvas.clientWidth, y: ((1 - v.y) / 2) * this.canvas.clientHeight };
+  }
+
+  // bounding box and size of the selection, drawn as a dimension box
+  showDimensions(on: boolean): { w: number; h: number; d: number; text: string } | null {
+    if (this.dimBox) { this.scene.remove(this.dimBox); this.dimBox.geometry.dispose(); this.dimBox = null; this.dirty = true; }
+    const p = this.selected; if (!on || !p) return null;
+    const box = new THREE.Box3();
+    if (p.kind === "rack") { const r = this.twin.racks.find((x) => x.asset_id === p.id)!; box.set(new THREE.Vector3(r.x, 0, r.y), new THREE.Vector3(r.x + r.width, r.height, r.y + r.depth)); }
+    else if (p.kind === "hall") { const h = this.twin.halls.find((x) => x.id === p.id)!; box.set(new THREE.Vector3(h.x, 0, h.y), new THREE.Vector3(h.x + h.width, 3.6, h.y + h.depth)); }
+    else { const m = this.equipMeshes.get(p.id); if (!m) return null; box.setFromObject(m); }
+    this.dimBox = new THREE.Box3Helper(box, new THREE.Color(0xffd23f)); this.scene.add(this.dimBox); this.dirty = true;
+    const s = box.getSize(new THREE.Vector3());
+    return { w: s.x, h: s.y, d: s.z, text: `${fmtLength(s.x)} x ${fmtLength(s.z)} x ${fmtLength(s.y)} (W x D x H)` };
+  }
+
   private onDown = (e: PointerEvent) => { this.down = { x: e.clientX, y: e.clientY }; };
   private onUp = (e: PointerEvent) => {
     if (Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 5 || e.button !== 0) return;
+    if (this.measuring) { const p = this.surfacePoint(e.clientX, e.clientY); if (p) this.addMeasurePoint(p); return; }
     this.select(this.pick(e.clientX, e.clientY));
   };
   private moveQueued = false;

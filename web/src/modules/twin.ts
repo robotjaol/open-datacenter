@@ -2,6 +2,7 @@ import type { Ctx } from "../main";
 import { activeData } from "../state";
 import type { Equipment, Hall, ModuleView, Rack } from "../types";
 import type { ColorMode, Layers, Picked, TwinScene } from "../twin3d";
+import { fmtLength } from "../units";
 import { chip, fixed, group, h } from "../util";
 
 const SYSTEM_NAME: Record<string, string> = { UPS: "Uninterruptible power supply", TX: "Transformer", GEN: "Generator", CHL: "Chiller", CDU: "Coolant distribution unit" };
@@ -107,6 +108,25 @@ export function twinModule(ctx: Ctx): ModuleView {
   }
   const modeBar = h("div", { class: "seg", role: "group", "aria-label": "Rack colour layer" }, ...([["hall", "Hall"], ["telemetry", "Telemetry"], ["neutral", "Neutral"]] as [ColorMode, string][]).map(([m, t]) =>
     h("button", { type: "button", "data-mode": m, "aria-pressed": String(m === mode), onClick: () => setMode(m) }, t)));
+  // ---- CAD tools: standard views, projection, section plane, measure, dimension box ----
+  const cadReadout = h("p", { class: "muted", style: "margin:6px 0 0;font-size:.875rem", "aria-live": "polite" }, "Measure: off");
+  const bounds = { x: [Math.min(...twin.halls.map((x) => x.x)), Math.max(...twin.halls.map((x) => x.x + x.width))], y: [0, 4], z: [Math.min(...twin.halls.map((x) => x.y)), Math.max(...twin.halls.map((x) => x.y + x.depth))] } as Record<"x" | "y" | "z", number[]>;
+  let sectionAxis: "x" | "y" | "z" | "" = "", measuring = false, dims = false;
+  const secSlider = h("input", { type: "range", min: "0", max: "100", value: "50", disabled: "", "aria-label": "Section plane position", style: "width:100%", onInput: () => applySection() }) as HTMLInputElement;
+  const secSelect = h("select", { "aria-label": "Section axis", onChange: (e: Event) => { sectionAxis = (e.target as HTMLSelectElement).value as typeof sectionAxis; secSlider.disabled = !sectionAxis; applySection(); } },
+    h("option", { value: "" }, "Section: off"), h("option", { value: "y" }, "Section: horizontal (Y)"), h("option", { value: "x" }, "Section: X"), h("option", { value: "z" }, "Section: Z")) as HTMLSelectElement;
+  function applySection() {
+    if (!sectionAxis) { scene?.setSection(null); return; }
+    const [lo, hi] = bounds[sectionAxis]; scene?.setSection(sectionAxis, lo + (hi - lo) * (Number(secSlider.value) / 100));
+  }
+  function refreshDims() { const d = scene?.showDimensions(dims); dimReadout.textContent = dims ? (d ? d.text : "Select an item to see its size") : ""; }
+  const dimReadout = h("p", { class: "muted", style: "margin:6px 0 0;font-size:.875rem" }, "");
+  const projBtn = h("button", { class: "btn", type: "button", "aria-pressed": "false", onClick: () => { const on = !scene?.isOrtho; scene?.setProjection(on); projBtn.setAttribute("aria-pressed", String(on)); projBtn.textContent = on ? "Orthographic" : "Perspective"; } }, "Perspective");
+  const measBtn = h("button", { class: "btn", type: "button", "aria-pressed": "false", onClick: () => { measuring = !measuring; scene?.setMeasure(measuring); measBtn.setAttribute("aria-pressed", String(measuring)); cadReadout.textContent = measuring ? "Click two points on a surface" : "Measure: off"; } }, "Measure");
+  const cadPanel = h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "CAD tools")), h("div", { class: "panel-body", style: "padding:8px;display:grid;gap:8px" },
+    h("div", { class: "seg fill", role: "group", "aria-label": "Standard views" }, ...([["plan", "Plan"], ["front", "Front"], ["side", "Side"], ["iso", "Iso"]] as const).map(([v, t]) => h("button", { type: "button", onClick: () => scene?.setView(v) }, t))),
+    projBtn, secSelect, secSlider, measBtn, cadReadout,
+    h("label", { class: "check" }, h("input", { type: "checkbox", onChange: (e: Event) => { dims = (e.target as HTMLInputElement).checked; refreshDims(); } }), "Dimension box of selection"), dimReadout));
   const search = h("input", { type: "search", list: "asset-list", placeholder: "Asset ID, e.g. H02-R017", "aria-label": "Find asset by ID", style: "width:100%",
     onChange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim().toUpperCase(); const r = twin.racks.find((x) => x.asset_id === v); const q = twin.equipment.find((x) => x.asset_id === v);
       if (r) pick({ kind: "rack", id: r.asset_id }, true); else if (q) pick({ kind: "equipment", id: q.asset_id }, true); } });
@@ -127,7 +147,7 @@ export function twinModule(ctx: Ctx): ModuleView {
         h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Find asset")), h("div", { class: "panel-body" }, search, datalist,
           h("div", { class: "tags" }, ...["UPS-A-01", "GEN-B-01", "CHL-SHARED-01", "CDU-H01-01"].map((id) => h("button", { class: "tag", type: "button", onClick: () => pick({ kind: "equipment", id }, true) }, id)))))),
       stage,
-      h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Equipment inspector")), inspector)));
+      h("div", { class: "side" }, cadPanel, h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Equipment inspector")), inspector))));
   drawZones(); drawInspector();
 
   let gone = false;
@@ -142,12 +162,14 @@ export function twinModule(ctx: Ctx): ModuleView {
       stage.replaceChildren(h("p", { class: "error", style: "margin:16px" }, `3D view could not start: ${(e as Error).message}. WebGL is required. Use the asset list and inspector instead.`));
       return;
     }
-    scene.onSelect = (p) => { selected = p; drawInspector(); };
+    scene.onSelect = (p) => { selected = p; drawInspector(); refreshDims(); };
+    scene.onMeasure = (m, pending) => { cadReadout.textContent = m ? `${fmtLength(m.distance)} (dx ${fmtLength(m.dx)}, dy ${fmtLength(m.dy)}, dz ${fmtLength(m.dz)})` : pending ? "Click the second point" : measuring ? "Click two points on a surface" : "Measure: off"; };
     scene.onHover = (id, x, y) => { if (!id) { hoverTip.hidden = true; return; } hoverTip.hidden = false; hoverTip.textContent = id; hoverTip.style.left = `${x + 14}px`; hoverTip.style.top = `${y + 14}px`; };
     legend();
     (window as any).__twin = { select: (id: string) => { const r = twin.racks.find((x) => x.asset_id === id); pick(r ? { kind: "rack", id } : { kind: "equipment", id }, true); },
       screenOf: (id: string) => scene!.screenOf(id), selected: () => selected, flyTo: (z: string) => scene!.flyTo(z, true), setMode, layers: (l: Partial<Layers>) => { Object.assign(layers, l); scene!.setLayers(layers); },
       stats: () => ({ frames: scene!.renderedFrames, calls: scene!.renderer.info.render.calls, triangles: scene!.renderer.info.render.triangles }),
+      cad: { setView: (v: any) => scene!.setView(v), ortho: (o: boolean) => scene!.setProjection(o), section: (a: any, o: number) => scene!.setSection(a, o), dims: (on: boolean) => scene!.showDimensions(on), measure: (on: boolean) => scene!.setMeasure(on) },
       look: (p: number[], t: number[]) => { scene!.camera.position.set(p[0], p[1], p[2]); scene!.controls.target.set(t[0], t[1], t[2]); scene!.controls.update(); scene!.invalidate(); } };
     dispose = () => { gone = true; scene?.dispose(); delete (window as any).__twin; };
   });
