@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { Equipment, Rack, Twin } from "./types";
-import { buildRack } from "./models/rack";
+import { buildRack, buildRackParts, FRONT_Z, RACK_UNIT_LIST, unitAtHeight } from "./models/rack";
 import { buildContainment } from "./models/containment";
 import { ledGeometry, ledMaterial } from "./leds";
 import { fmtLength, measure, Measurement, ORTHO_FOV, orthoScale, PERSPECTIVE_FOV, sectionPlane, SectionAxis, ViewName, VIEW_DIRECTION } from "./cad";
@@ -18,7 +18,7 @@ const MID_DISTANCE = 70;      // medium detail up to here, then a plain block
 
 export type ColorMode = "hall" | "telemetry" | "neutral";
 export interface Layers { leds: boolean; aisles: boolean; halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
-export interface Picked { kind: "rack" | "equipment" | "hall"; id: string }
+export interface Picked { kind: "rack" | "equipment" | "hall"; id: string; unit?: number }
 
 const SYSTEM_COLOR: Record<string, number> = { UPS: 0x7c9cff, TX: 0xf2b84b, GEN: 0xe8829f, CHL: 0x38bdf8, CDU: 0x6fcf97 };
 const HALL_COLOR = [0x38bdf8, 0x7c9cff, 0x6fcf97, 0xb79cf0];
@@ -66,6 +66,7 @@ export class TwinScene {
   private casters: THREE.Object3D[] = [];
   private ledMat = ledMaterial(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   private ledsOn = true;
+  private layerAisles = true;
   private ledPhase = 0;
   private lastTick = performance.now();
   activity = 1;            // global load factor for LED rate, set by the simulation
@@ -82,6 +83,10 @@ export class TwinScene {
   private anim: { t0: number; from: THREE.Vector3; to: THREE.Vector3; ft: THREE.Vector3; tt: THREE.Vector3 } | null = null;
   private selected: Picked | null = null;
   private resize: ResizeObserver;
+  // component level: selected unit marker and exploded assembly
+  private unitMarker = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.38, depthTest: false }));
+  private exploded: { id: string; group: THREE.Group; parts: { mesh: THREE.Mesh; dir: THREE.Vector3; unit?: number }[]; k: number; to: number; t0: number; from: number; settled?: boolean; hidden: { im: THREE.InstancedMesh; idx: number }[] } | null = null;
+  get isExploded() { return this.exploded !== null && this.exploded.to === 1; }
   // CAD state
   private ortho = false;
   private lodScale = 1;
@@ -121,7 +126,8 @@ export class TwinScene {
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshBasicMaterial({ color: 0x0d1117 }));
     ground.rotation.x = -Math.PI / 2; ground.position.set(this.center.x, -0.02, this.center.z); this.scene.add(ground);
     const grid = new THREE.GridHelper(200, 40, 0x26303b, 0x171d25); grid.position.set(this.center.x, 0, this.center.z); this.scene.add(grid);
-    this.scene.add(this.hallGroup, this.labelGroup, this.lines, this.trays, this.aisleGroup, this.measureGroup);
+    this.unitMarker.visible = false; this.unitMarker.renderOrder = 9; this.unitMarker.raycast = () => {};
+    this.scene.add(this.hallGroup, this.labelGroup, this.lines, this.trays, this.aisleGroup, this.measureGroup, this.unitMarker);
     this.buildHalls();
     this.buildRacks();
     this.buildTrays();
@@ -278,14 +284,16 @@ export class TwinScene {
 
   // swap between the box stand-in and the full rack model by distance
   private updateLod() {
+    const iso = this.exploded !== null;            // an exploded rack stands alone
     for (const s of this.rackSets) {
       const d = this.camera.position.distanceTo(s.center) * this.lodScale, full = d < DETAIL_DISTANCE, mid = !full && d < MID_DISTANCE;
-      s.body.visible = this.racksVisible && full; s.mid.visible = this.racksVisible && mid;
-      s.accent.visible = this.racksVisible && (full || mid); s.led.visible = this.ledsOn && !this.sectionOn && this.racksVisible && (full || mid); s.simple.visible = this.racksVisible && !full && !mid;
-      if (s.trays) s.trays.visible = this.racksVisible && (full || mid);
+      const on = this.racksVisible && !iso;
+      s.body.visible = on && full; s.mid.visible = on && mid;
+      s.accent.visible = on && (full || mid); s.led.visible = this.ledsOn && !this.sectionOn && on && (full || mid); s.simple.visible = on && !full && !mid;
+      if (s.trays) s.trays.visible = on && (full || mid);
     }
     // labels are fixed in world size, so hide them when the camera is close
-    for (const t of this.labelGroup.children) t.visible = this.camera.position.distanceTo(t.position) * this.lodScale > 30;
+    for (const t of this.labelGroup.children) t.visible = this.camera.position.distanceTo(t.position) * this.lodScale > 30 && this.camera.position.y > 10;
   }
 
   private buildEquipment() {
@@ -311,7 +319,7 @@ export class TwinScene {
 
   setLayers(l: Layers) {
     this.hallGroup.visible = l.halls;
-    this.aisleGroup.visible = l.aisles; this.ledsOn = l.leds; this.racksVisible = l.racks; this.trays.visible = l.racks; this.dirty = true; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
+    this.layerAisles = l.aisles; this.aisleGroup.visible = l.aisles && !this.exploded; this.ledsOn = l.leds; this.racksVisible = l.racks; this.trays.visible = l.racks; this.dirty = true; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
     this.updateLod();
     this.labelGroup.visible = l.labels;
     this.lines.visible = l.relations;
@@ -412,16 +420,82 @@ export class TwinScene {
 
   select(p: Picked | null, notify = true) {
     this.selected = p;
-    this.paint();
+    if (this.exploded && this.exploded.to === 1 && p?.id !== this.exploded.id) this.explode(false);
+    this.paint(); this.updateUnitMarker();
     if (notify) this.onSelect(p);
+  }
+
+  // yellow marker over the selected rack unit (or emissive highlight on the exploded part)
+  private updateUnitMarker() {
+    const p = this.selected, ex = this.exploded;
+    if (ex) for (const pt of ex.parts) (pt.mesh.material as THREE.MeshStandardMaterial).emissive.setHex(p?.id === ex.id && p.unit !== undefined && pt.unit === p.unit ? 0x6b5200 : 0x000000);
+    if (!p || p.kind !== "rack" || p.unit === undefined || ex) { this.unitMarker.visible = false; this.dirty = true; return; }
+    const r = this.twin.racks.find((x) => x.asset_id === p.id)!, u = RACK_UNIT_LIST[p.unit], m = new THREE.Matrix4();
+    placeRack(m, r);
+    this.unitMarker.position.set(0, (u.y0 + u.y1) / 2, FRONT_Z + 0.045).applyMatrix4(m);
+    this.unitMarker.quaternion.setFromRotationMatrix(m); this.unitMarker.scale.set(0.492, u.y1 - u.y0 + 0.004, 0.05);
+    this.unitMarker.visible = true; this.dirty = true;
+  }
+
+  // pull the selected rack apart into frame, side panels, PDUs, manifold and each unit
+  explode(on: boolean) {
+    if (!on) { if (this.exploded) { this.exploded.to = 0; this.exploded.from = this.exploded.k; this.exploded.t0 = performance.now(); this.exploded.settled = false; this.dirty = true; } return; }
+    const p = this.selected; if (!p || p.kind !== "rack" || this.exploded) return;
+    const r = this.twin.racks.find((x) => x.asset_id === p.id)!, loc = this.rackLoc.get(p.id)!;
+    const placement = new THREE.Matrix4(); placeRack(placement, r);
+    const group = new THREE.Group(); group.matrixAutoUpdate = false; group.matrix.copy(placement); group.matrixWorldNeedsUpdate = true;
+    const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0.55 });
+    const ledBasic = new THREE.MeshBasicMaterial({ color: 0x3ddc84 });
+    const parts: { mesh: THREE.Mesh; dir: THREE.Vector3; unit?: number }[] = [];
+    const list = buildRackParts();
+    list.forEach((pt) => {
+      const mesh = new THREE.Mesh(pt.geometry, bodyMat.clone()); mesh.castShadow = false; mesh.userData = { unit: pt.unit?.index, name: pt.name };
+      group.add(mesh);
+      const dir = new THREE.Vector3(...pt.direction);
+      if (pt.unit) { dir.y = (pt.unit.index - list.length / 3) * 0.075; dir.z = 0.55 + (pt.unit.index % 2) * 0.25; }
+      parts.push({ mesh, dir, unit: pt.unit?.index });
+      if (pt.led) { const lm = new THREE.Mesh(pt.led, ledBasic); lm.raycast = () => {}; mesh.add(lm); }
+    });
+    // hide the instanced rack while the exploded copy stands in for it
+    const set = loc.set, caster = this.casters[this.rackSets.indexOf(set)] as THREE.InstancedMesh, hidden: { im: THREE.InstancedMesh; idx: number }[] = [];
+    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    for (const im of [set.simple, set.mid, set.body, set.accent, set.led, caster]) { im.setMatrixAt(loc.idx, zero); im.instanceMatrix.needsUpdate = true; hidden.push({ im, idx: loc.idx }); }
+    this.scene.add(group);
+    this.aisleGroup.visible = false;
+    this.exploded = { id: p.id, group, parts, k: 0, from: 0, to: 1, t0: performance.now(), hidden };
+    this.shadowDirty = true; this.dirty = true;
+    this.updateUnitMarker();
+    const c = new THREE.Vector3(r.x + r.width / 2, 1.1, r.y + r.depth / 2), sign = r.facing === "-y" ? -1 : 1;
+    this.moveTo(c, c.clone().add(new THREE.Vector3(2.6 * sign, 0.8, 4.4 * sign)));
+  }
+
+  private stepExplode() {
+    const ex = this.exploded; if (!ex) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const t = reduce ? 1 : Math.min(1, (performance.now() - ex.t0) / 800), e = 1 - Math.pow(1 - t, 3);
+    ex.k = ex.from + (ex.to - ex.from) * e;
+    for (const pt of ex.parts) pt.mesh.position.copy(pt.dir).multiplyScalar(ex.k * 0.5);
+    if (t < 1 || !ex.settled) { this.dirty = true; ex.settled = t >= 1; }
+    if (t >= 1 && ex.to === 0) this.finishExplode();
+  }
+
+  private finishExplode() {
+    const ex = this.exploded; if (!ex) return;
+    const r = this.twin.racks.find((x) => x.asset_id === ex.id)!, m = new THREE.Matrix4(); placeRack(m, r);
+    for (const h of ex.hidden) { h.im.setMatrixAt(h.idx, m); h.im.instanceMatrix.needsUpdate = true; }
+    this.scene.remove(ex.group);
+    ex.group.traverse((o) => { const me = o as THREE.Mesh; me.geometry?.dispose?.(); (me.material as THREE.Material | undefined)?.dispose?.(); });
+    this.aisleGroup.visible = this.layerAisles;
+    this.exploded = null; this.shadowDirty = true; this.dirty = true; this.updateUnitMarker();
   }
 
   focusOn(p: Picked) {
     const c = new THREE.Vector3();
     let off: THREE.Vector3;
     if (p.kind === "rack") {
-      const r = this.twin.racks.find((x) => x.asset_id === p.id)!;
-      c.set(r.x + r.width / 2, 1.2, r.y + r.depth / 2); off = new THREE.Vector3(0.35, 0.15, r.facing === "-y" ? -1.65 : 1.65);       // inside the 1.8 m cold aisle, facing the front
+      const r = this.twin.racks.find((x) => x.asset_id === p.id)!, sign = r.facing === "-y" ? -1 : 1;
+      c.set(r.x + r.width / 2, 1.2, r.y + r.depth / 2); off = new THREE.Vector3(0.35, 0.15, 1.65 * sign);
+      if (p.unit !== undefined) { const u = RACK_UNIT_LIST[p.unit]; c.y = (u.y0 + u.y1) / 2; c.z += (FRONT_Z + 0.05) * sign; off = new THREE.Vector3(0.18 * sign, 0.05, 0.85 * sign); }       // inside the 1.8 m cold aisle, facing the front
     } else if (p.kind === "hall") {
       const h = this.twin.halls.find((x) => x.id === p.id)!;
       c.set(h.x + h.width / 2, 2, h.y + h.depth / 2); off = new THREE.Vector3(18, 26, 32);
@@ -473,11 +547,21 @@ export class TwinScene {
     const targets: THREE.Object3D[] = [];
     for (const st of this.rackSets) for (const im of [st.simple, st.mid, st.body]) if (im.visible) targets.push(im);
     for (const m of this.equipMeshes.values()) if (m.visible) targets.push(m);
+    if (this.exploded) for (const pt of this.exploded.parts) targets.push(pt.mesh);
     if (this.hallGroup.visible) for (const f of this.hallFloors.values()) targets.push(f);
     const hit = this.raycaster.intersectObjects(targets, false)[0];
     if (!hit) return null;
+    if (this.exploded && hit.object.parent === this.exploded.group) return { kind: "rack", id: this.exploded.id, unit: hit.object.userData.unit };
     const set = this.rackSets.find((st) => st.simple === hit.object || st.mid === hit.object || st.body === hit.object);
-    if (set) return { kind: "rack", id: set.ids[hit.instanceId!] };
+    if (set) {
+      let unit: number | undefined;
+      if (hit.object === set.body || hit.object === set.mid) {
+        const m = new THREE.Matrix4(); (hit.object as THREE.InstancedMesh).getMatrixAt(hit.instanceId!, m);
+        const local = hit.point.clone().applyMatrix4(m.invert());
+        if (local.z > 0.3) unit = unitAtHeight(local.y)?.index;       // front face only
+      }
+      return { kind: "rack", id: set.ids[hit.instanceId!], unit };
+    }
     return { kind: hit.object.userData.kind, id: hit.object.userData.id };
   }
 
@@ -596,6 +680,7 @@ export class TwinScene {
       if (k >= 1) this.anim = null;
     }
     if (this.anim) this.dirty = true;
+    this.stepExplode();
     const now = performance.now(), dt = now - this.lastTick;
     if (dt >= 50 && this.ledMat.uniforms.uCalm.value === 0 && this.rackSets.some((r) => r.led.visible)) {
       this.lastTick = now; this.ledPhase += (dt / 1000) * this.activity;

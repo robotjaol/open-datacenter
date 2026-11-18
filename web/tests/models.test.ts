@@ -97,3 +97,26 @@ describe("rack status LEDs", () => {
     expect(Math.max(...rate)).toBeLessThan(3);
   });
 });
+
+describe("rack units and exploded parts", async () => {
+  const { RACK_UNIT_LIST, unitAtHeight, buildRackParts } = await import("../src/models/rack");
+  it("units tile 42U with no gap or overlap", () => {
+    expect(RACK_UNIT_LIST.reduce((a, u) => a + u.u, 0)).toBe(RACK_UNITS);
+    for (let i = 1; i < RACK_UNIT_LIST.length; i++) expect(RACK_UNIT_LIST[i].y0).toBeCloseTo(RACK_UNIT_LIST[i - 1].y1, 9);
+    expect(RACK_UNIT_LIST[0].u0).toBe(1);
+  });
+  it("finds the unit at a height", () => {
+    expect(unitAtHeight(0.05)).toBeNull();
+    expect(unitAtHeight(0.13)?.index).toBe(0);
+    expect(unitAtHeight(1.9)?.kind).toBeDefined();
+    expect(unitAtHeight(2.0)).toBeNull();
+    expect(unitAtHeight(2.19)).toBeNull();
+  });
+  it("exploded parts rebuild the same triangle count as the full body", () => {
+    const tri = (g: { getAttribute(n: string): { count: number } }) => g.getAttribute("position").count / 3;
+    const full = buildRack();
+    const parts = buildRackParts();
+    const sum = parts.reduce((a, p) => a + tri(p.geometry) + (p.led ? tri(p.led) : 0), 0);
+    expect(sum).toBe(tri(full.body) + tri(full.led));
+  });
+});

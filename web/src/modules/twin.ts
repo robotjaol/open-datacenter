@@ -3,6 +3,7 @@ import { activeData } from "../state";
 import type { Equipment, Hall, ModuleView, Rack } from "../types";
 import type { ColorMode, Layers, Picked, TwinScene } from "../twin3d";
 import { fmtLength } from "../units";
+import { RACK_UNIT_LIST } from "../models/rack-units";
 import { chip, fixed, group, h } from "../util";
 
 const SYSTEM_NAME: Record<string, string> = { UPS: "Uninterruptible power supply", TX: "Transformer", GEN: "Generator", CHL: "Chiller", CDU: "Coolant distribution unit" };
@@ -34,7 +35,7 @@ export function twinModule(ctx: Ctx): ModuleView {
     selected = p;
     scene?.select(p, false);
     if (p && focus) scene?.focusOn(p);
-    drawInspector();
+    drawInspector(); refreshDims();
   }
 
   function drawInspector() {
@@ -60,6 +61,23 @@ export function twinModule(ctx: Ctx): ModuleView {
       h("div", {}, chip("simulated", t.quality === "synthetic" ? "Synthetic data" : t.quality)))));
   }
 
+  const UNIT_NOTE: Record<string, string> = {
+    srv2: "Front faceplate with ear handles, 4 drive bays, vent field and a status LED.",
+    srv4: "Front faceplate with ear handles, 8 drive bays, vent field and a status LED.",
+    sw: "Front faceplate with 24 ports and a status LED.", blank: "Blank filler panel for airflow separation.",
+    cable: "Horizontal cable manager with a row of cable guides.", patch: "24 port patch panel.",
+  };
+  function unitCard(r: Rack, index: number): HTMLElement {
+    const u = RACK_UNIT_LIST[index], dl = h("dl", { class: "kv" });
+    row(dl, "Slot", u.u === 1 ? `U${u.u0}` : `U${u.u0} to U${u.u0 + u.u - 1}`); row(dl, "Height", `${fixed(u.u * 44.45, 1)} mm (${u.u}U)`);
+    row(dl, "Mounting", "19 inch front rails, 482.6 mm faceplate"); row(dl, "Faceplate", UNIT_NOTE[u.kind]);
+    row(dl, "Telemetry", u.kind === "srv2" || u.kind === "srv4" ? "Not modeled per unit. Rack level telemetry only." : "Not modeled");
+    const sel = h("select", { "aria-label": "Choose a unit in this rack", onChange: (e: Event) => pick({ kind: "rack", id: r.asset_id, unit: Number((e.target as HTMLSelectElement).value) }, true) },
+      ...RACK_UNIT_LIST.slice().reverse().map((x) => h("option", { value: String(x.index), selected: x.index === index ? "" : undefined }, `${x.u === 1 ? "U" + x.u0 : "U" + x.u0 + "-U" + (x.u0 + x.u - 1)}  ${x.label}`)));
+    return h("div", { class: "tel" }, h("b", {}, `${u.label}, ${r.asset_id}`), dl, sel,
+      h("div", { class: "tags" }, chip("design", "Generic configuration"), chip("simulated", "Illustrative layout, not source data")),
+      h("button", { class: "btn", type: "button", onClick: () => pick({ kind: "rack", id: r.asset_id }, true) }, "Back to rack"));
+  }
   function rackView(r: Rack): Node[] {
     const dl = h("dl", { class: "kv" });
     row(dl, "Asset ID", h("span", { class: "id" }, r.asset_id)); row(dl, "Equipment category", "IT rack (white space)"); row(dl, "Hall or location", r.hall_id);
@@ -71,7 +89,8 @@ export function twinModule(ctx: Ctx): ModuleView {
     row(dl, "Hall CDUs", tagList(r.relations.cdu_ids)); row(dl, "Chillers (shared)", tagList(r.relations.chiller_ids));
     row(dl, "Position", `x ${fixed(r.x, 1)} m, y ${fixed(r.y, 1)} m (display only)`);
     row(dl, "Engineering notes", r.relations.note);
-    return [h("div", {}, h("h3", {}, "Rack"), h("p", { class: "unit" }, "Linked by asset ID")), dl, telemetryBlock(r.telemetry, r.design_kw),
+    const unitBox = selected?.unit !== undefined ? [unitCard(r, selected.unit)] : [h("button", { class: "btn", type: "button", onClick: () => pick({ kind: "rack", id: r.asset_id, unit: 0 }, true) }, "Inspect units (U1 to U42)")];
+    return [h("div", {}, h("h3", {}, "Rack"), h("p", { class: "unit" }, "Linked by asset ID")), ...unitBox, dl, telemetryBlock(r.telemetry, r.design_kw),
       h("div", { class: "tags" }, chip("design", "Design allowance"), chip("modeled", "Cooling split from config"))];
   }
   function equipmentView(e: Equipment): Node[] {
@@ -119,13 +138,17 @@ export function twinModule(ctx: Ctx): ModuleView {
     if (!sectionAxis) { scene?.setSection(null); return; }
     const [lo, hi] = bounds[sectionAxis]; scene?.setSection(sectionAxis, lo + (hi - lo) * (Number(secSlider.value) / 100));
   }
-  function refreshDims() { const d = scene?.showDimensions(dims); dimReadout.textContent = dims ? (d ? d.text : "Select an item to see its size") : ""; }
+  function refreshDims() {
+    const rackSel = selected?.kind === "rack"; explodeBtn.disabled = !rackSel && !scene?.isExploded; if (!scene?.isExploded) syncExplode(false);
+     const d = scene?.showDimensions(dims); dimReadout.textContent = dims ? (d ? d.text : "Select an item to see its size") : ""; }
   const dimReadout = h("p", { class: "muted", style: "margin:6px 0 0;font-size:.875rem" }, "");
   const projBtn = h("button", { class: "btn", type: "button", "aria-pressed": "false", onClick: () => { const on = !scene?.isOrtho; scene?.setProjection(on); projBtn.setAttribute("aria-pressed", String(on)); projBtn.textContent = on ? "Orthographic" : "Perspective"; } }, "Perspective");
+  const explodeBtn = h("button", { class: "btn", type: "button", disabled: "", "aria-pressed": "false", onClick: () => { const on = !scene?.isExploded; scene?.explode(on); syncExplode(on); } }, "Explode selected rack") as HTMLButtonElement;
+  function syncExplode(on: boolean) { explodeBtn.setAttribute("aria-pressed", String(on)); explodeBtn.textContent = on ? "Assemble rack" : "Explode selected rack"; }
   const measBtn = h("button", { class: "btn", type: "button", "aria-pressed": "false", onClick: () => { measuring = !measuring; scene?.setMeasure(measuring); measBtn.setAttribute("aria-pressed", String(measuring)); cadReadout.textContent = measuring ? "Click two points on a surface" : "Measure: off"; } }, "Measure");
   const cadPanel = h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "CAD tools")), h("div", { class: "panel-body", style: "padding:8px;display:grid;gap:8px" },
     h("div", { class: "seg fill", role: "group", "aria-label": "Standard views" }, ...([["plan", "Plan"], ["front", "Front"], ["side", "Side"], ["iso", "Iso"]] as const).map(([v, t]) => h("button", { type: "button", onClick: () => scene?.setView(v) }, t))),
-    projBtn, secSelect, secSlider, measBtn, cadReadout,
+    projBtn, secSelect, secSlider, measBtn, cadReadout, explodeBtn,
     h("label", { class: "check" }, h("input", { type: "checkbox", onChange: (e: Event) => { dims = (e.target as HTMLInputElement).checked; refreshDims(); } }), "Dimension box of selection"), dimReadout));
   const search = h("input", { type: "search", list: "asset-list", placeholder: "Asset ID, e.g. H02-R017", "aria-label": "Find asset by ID", style: "width:100%",
     onChange: (e: Event) => { const v = (e.target as HTMLInputElement).value.trim().toUpperCase(); const r = twin.racks.find((x) => x.asset_id === v); const q = twin.equipment.find((x) => x.asset_id === v);
