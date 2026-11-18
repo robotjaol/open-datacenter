@@ -8,8 +8,9 @@ import { buildTray } from "./models/tray";
 import { buildPlant } from "./models/plant";
 import { availableModels, loadExternal } from "./models/external";
 import { RACK_SIZE } from "./models/rack";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
-interface RackSet { ids: string[]; center: THREE.Vector3; simple: THREE.InstancedMesh; body: THREE.InstancedMesh; accent: THREE.InstancedMesh }
+interface RackSet { ids: string[]; center: THREE.Vector3; simple: THREE.InstancedMesh; body: THREE.InstancedMesh; accent: THREE.InstancedMesh; hallId: string; trays?: THREE.Mesh }
 const DETAIL_DISTANCE = 70;
 
 export type ColorMode = "hall" | "telemetry" | "neutral";
@@ -60,7 +61,11 @@ export class TwinScene {
   private trays = new THREE.Group();
   private aisleGroup = new THREE.Group();
   private casters: THREE.Object3D[] = [];
+  private dirty = true;
   private shadowDirty = true;
+  renderedFrames = 0;
+  // ask for one more frame; the loop draws only when something changed
+  invalidate() { this.dirty = true; }
   private raycaster = new THREE.Raycaster();
   private ray = new THREE.Vector2();
   private frame = 0;
@@ -75,13 +80,14 @@ export class TwinScene {
   constructor(private canvas: HTMLCanvasElement, private twin: Twin) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.autoUpdate = false; this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.autoUpdate = false; this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.0;
     this.pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = this.pmrem.fromScene(new RoomEnvironment(), 0.04).texture; this.scene.environmentIntensity = 0.55;
     this.scene.background = new THREE.Color(0x0a0d11);
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.5, 600);
     this.controls = new OrbitControls(this.camera, canvas);
+    this.controls.addEventListener("change", () => { this.dirty = true; });
     this.controls.enableDamping = true; this.controls.dampingFactor = 0.08;
     this.controls.maxPolarAngle = Math.PI / 2 - 0.03; this.controls.minDistance = 1.2; this.controls.maxDistance = 220;
     // framing
@@ -168,7 +174,7 @@ export class TwinScene {
         im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
         return im;
       };
-      const set: RackSet = { ids: racks.map((r) => r.asset_id), center: new THREE.Vector3(hall.x + hall.width / 2, 1, hall.y + hall.depth / 2),
+      const set: RackSet = { hallId: hall.id, ids: racks.map((r) => r.asset_id), center: new THREE.Vector3(hall.x + hall.width / 2, 1, hall.y + hall.depth / 2),
         simple: mk(geo.simple, simpleMat), body: mk(geo.body, bodyMat), accent: mk(geo.accent, accentMat) };
       racks.forEach((r, i) => {
         placeRack(m, r);
@@ -187,39 +193,49 @@ export class TwinScene {
     }
   }
 
-  // hot aisles get a glazed roof and end doors, cold aisles a blue floor marker; both come from the Python aisle plan
+  // hot aisles get a glazed roof and end doors, cold aisles a blue floor marker; both come from the Python aisle plan.
+  // Everything is merged by material, so the whole layer costs four draw calls.
   private buildAisles() {
     const frameMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.7 });
     const glassMat = new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.28, roughness: 0.1, metalness: 0.2, depthWrite: false });
-    const cold = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
-    const hot = new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
-    const none = () => {};
+    const tintMat = (color: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    const tints = { cold: [] as THREE.BufferGeometry[], hot: [] as THREE.BufferGeometry[] }, frames: THREE.BufferGeometry[] = [], glass: THREE.BufferGeometry[] = [];
+    const at = (g: THREE.BufferGeometry, x: number, y: number, z: number) => g.clone().translate(x, y, z);
     for (const hall of this.twin.halls) for (const a of hall.aisles ?? []) {
       const cx = a.x + a.width / 2, cz = a.y + a.depth / 2;
-      const tint = new THREE.Mesh(new THREE.PlaneGeometry(a.width, a.depth), a.kind === "hot" ? hot : cold);
-      tint.rotation.x = -Math.PI / 2; tint.position.set(cx, 0.21, cz); tint.raycast = none; this.aisleGroup.add(tint);
+      const plane = new THREE.PlaneGeometry(a.width, a.depth); plane.rotateX(-Math.PI / 2); plane.deleteAttribute("uv");
+      tints[a.kind].push(at(plane, cx, 0.21, cz));
       if (!a.contained) continue;
-      const { frame, glass } = buildContainment(a.width, a.depth, 2.2);
-      const fm = new THREE.Mesh(frame, frameMat), gm = new THREE.Mesh(glass, glassMat);
-      for (const o of [fm, gm]) { o.position.set(cx, 0.2, cz); o.raycast = none; this.aisleGroup.add(o); }
-      fm.castShadow = true; gm.renderOrder = 2;
+      const c = buildContainment(a.width, a.depth, 2.2);
+      frames.push(at(c.frame, cx, 0.2, cz)); glass.push(at(c.glass, cx, 0.2, cz));
     }
+    const add = (gs: THREE.BufferGeometry[], mat: THREE.Material, shadow = false, order = 0) => {
+      if (!gs.length) return;
+      const mesh = new THREE.Mesh(mergeGeometries(gs, false)!, mat);
+      mesh.raycast = () => {}; mesh.castShadow = shadow; mesh.renderOrder = order; this.aisleGroup.add(mesh);
+    };
+    add(tints.cold, tintMat(0x38bdf8)); add(tints.hot, tintMat(0xf97316)); add(frames, frameMat, true); add(glass, glassMat, false, 2);
   }
 
-  // generic overhead cable tray above each rack row, schematic and not part of the data contract
+  // generic overhead cable tray above each rack row, schematic and not part of the data contract.
+  // One merged mesh per hall, shown together with the detailed racks of that hall.
   private buildTrays() {
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.6 });
     const topY = 2.75;
     for (const hall of this.twin.halls) {
       const rows = new Map<number, typeof this.twin.racks>();
       for (const r of this.twin.racks) if (r.hall_id === hall.id) { const a = rows.get(r.y) ?? []; a.push(r); rows.set(r.y, a); }
+      const parts: THREE.BufferGeometry[] = [];
       for (const [y, rs] of rows) {
         const x0 = Math.min(...rs.map((r) => r.x)), x1 = Math.max(...rs.map((r) => r.x + r.width));
-        const mesh = new THREE.Mesh(buildTray(x1 - x0, hall.height - topY), mat);
-        mesh.position.set(x0, topY, y + rs[0].depth / 2); mesh.castShadow = true;
-        mesh.raycast = () => {};
-        this.trays.add(mesh);
+        parts.push(buildTray(x1 - x0, hall.height - topY).translate(x0, topY, y + rs[0].depth / 2));
       }
+      if (!parts.length) continue;
+      const mesh = new THREE.Mesh(mergeGeometries(parts, false)!, mat);
+      mesh.castShadow = true; mesh.raycast = () => {};
+      this.trays.add(mesh);
+      const set = this.rackSets.find((x) => x.hallId === hall.id);
+      if (set) set.trays = mesh;
     }
   }
 
@@ -229,14 +245,14 @@ export class TwinScene {
     if (!have.size) return;
     if (have.has("rack")) {
       const rack = await loadExternal("rack", { w: RACK_SIZE.w, d: RACK_SIZE.d, h: RACK_SIZE.h, origin: "floor" });
-      if (rack && !this.disposed) for (const st of this.rackSets) { st.body.geometry = rack; st.accent.count = 0; }
+      if (rack && !this.disposed) { for (const st of this.rackSets) { st.body.geometry = rack; st.accent.count = 0; } this.dirty = true; }
     }
     const names: Record<string, string> = { UPS: "ups", TX: "tx", GEN: "gen", CHL: "chl", CDU: "cdu" };
     for (const [id, mesh] of this.equipMeshes) {
       const e = this.twin.equipment.find((x) => x.asset_id === id)!, p = e.display_position, name = names[e.system];
       if (!name || !have.has(name)) continue;
       const g = await loadExternal(name, { w: p.width, d: p.depth, h: p.height, origin: "center" });
-      if (g && !this.disposed) { mesh.geometry = g; this.shadowDirty = true; const mat = mesh.material as THREE.MeshStandardMaterial; mat.vertexColors = true; mat.needsUpdate = true; }
+      if (g && !this.disposed) { mesh.geometry = g; this.shadowDirty = true; this.dirty = true; const mat = mesh.material as THREE.MeshStandardMaterial; mat.vertexColors = true; mat.needsUpdate = true; }
     }
   }
 
@@ -245,6 +261,7 @@ export class TwinScene {
     for (const s of this.rackSets) {
       const near = this.camera.position.distanceTo(s.center) < DETAIL_DISTANCE;
       s.body.visible = this.racksVisible && near; s.accent.visible = this.racksVisible && near; s.simple.visible = this.racksVisible && !near;
+      if (s.trays) s.trays.visible = this.racksVisible && near;
     }
   }
 
@@ -265,13 +282,13 @@ export class TwinScene {
   private fit() {
     const parent = this.canvas.parentElement!;
     const w = Math.max(2, parent.clientWidth), h = Math.max(2, parent.clientHeight);
-    this.renderer.setSize(w, h, false);
+    this.renderer.setSize(w, h, false); this.dirty = true;
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
   }
 
   setLayers(l: Layers) {
     this.hallGroup.visible = l.halls;
-    this.aisleGroup.visible = l.aisles; this.racksVisible = l.racks; this.trays.visible = l.racks; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
+    this.aisleGroup.visible = l.aisles; this.racksVisible = l.racks; this.trays.visible = l.racks; this.dirty = true; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
     this.updateLod();
     this.labelGroup.visible = l.labels;
     this.lines.visible = l.relations;
@@ -324,6 +341,7 @@ export class TwinScene {
   }
 
   private paint() {
+    this.dirty = true;
     const rel = this.related(this.selected);
     const any = this.selected !== null;
     const c = new THREE.Color(), body = new THREE.Color();
@@ -409,6 +427,7 @@ export class TwinScene {
 
   private moveTo(target: THREE.Vector3, position: THREE.Vector3, instant = false) {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.dirty = true;
     if (instant || reduce) { this.camera.position.copy(position); this.controls.target.copy(target); this.controls.update(); this.anim = null; return; }
     this.anim = { t0: performance.now(), from: this.camera.position.clone(), to: position, ft: this.controls.target.clone(), tt: target };
   }
@@ -467,10 +486,13 @@ export class TwinScene {
       this.controls.target.lerpVectors(this.anim.ft, this.anim.tt, e);
       if (k >= 1) this.anim = null;
     }
+    if (this.anim) this.dirty = true;
     this.controls.update();
+    if (!this.dirty) return;
+    this.dirty = false;
     this.updateLod();
     if (this.shadowDirty) { this.renderer.shadowMap.needsUpdate = true; this.shadowDirty = false; }
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera); this.renderedFrames++;
   };
 
   dispose() {

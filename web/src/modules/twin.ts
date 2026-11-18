@@ -1,7 +1,7 @@
 import type { Ctx } from "../main";
 import { activeData } from "../state";
 import type { Equipment, Hall, ModuleView, Rack } from "../types";
-import { TwinScene, type ColorMode, type Layers, type Picked } from "../twin3d";
+import type { ColorMode, Layers, Picked, TwinScene } from "../twin3d";
 import { chip, fixed, group, h } from "../util";
 
 const SYSTEM_NAME: Record<string, string> = { UPS: "Uninterruptible power supply", TX: "Transformer", GEN: "Generator", CHL: "Chiller", CDU: "Coolant distribution unit" };
@@ -130,10 +130,14 @@ export function twinModule(ctx: Ctx): ModuleView {
       h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("h2", {}, "Equipment inspector")), inspector)));
   drawZones(); drawInspector();
 
-  let dispose: (() => void) | undefined;
-  requestAnimationFrame(() => {
+  let gone = false;
+  let dispose: (() => void) | undefined = () => { gone = true; };
+  // three.js loads only when this page opens, so the other pages start faster
+  requestAnimationFrame(async () => {
     try {
-      scene = new TwinScene(canvas, twin);
+      const { TwinScene: Scene } = await import("../twin3d");
+      if (gone) return;
+      scene = new Scene(canvas, twin);
     } catch (e) {
       stage.replaceChildren(h("p", { class: "error", style: "margin:16px" }, `3D view could not start: ${(e as Error).message}. WebGL is required. Use the asset list and inspector instead.`));
       return;
@@ -143,8 +147,9 @@ export function twinModule(ctx: Ctx): ModuleView {
     legend();
     (window as any).__twin = { select: (id: string) => { const r = twin.racks.find((x) => x.asset_id === id); pick(r ? { kind: "rack", id } : { kind: "equipment", id }, true); },
       screenOf: (id: string) => scene!.screenOf(id), selected: () => selected, flyTo: (z: string) => scene!.flyTo(z, true), setMode, layers: (l: Partial<Layers>) => { Object.assign(layers, l); scene!.setLayers(layers); },
-      look: (p: number[], t: number[]) => { scene!.camera.position.set(p[0], p[1], p[2]); scene!.controls.target.set(t[0], t[1], t[2]); scene!.controls.update(); } };
-    dispose = () => { scene?.dispose(); delete (window as any).__twin; };
+      stats: () => ({ frames: scene!.renderedFrames, calls: scene!.renderer.info.render.calls, triangles: scene!.renderer.info.render.triangles }),
+      look: (p: number[], t: number[]) => { scene!.camera.position.set(p[0], p[1], p[2]); scene!.controls.target.set(t[0], t[1], t[2]); scene!.controls.update(); scene!.invalidate(); } };
+    dispose = () => { gone = true; scene?.dispose(); delete (window as any).__twin; };
   });
   return { el, dispose: () => dispose?.() };
 }
