@@ -24,7 +24,7 @@ configs/tropical-5mw.json ──► dcf (Python model) ──► artifacts/refer
 | --- | --- |
 | `core.json` | 17 KPIs with `provenance`, `synthetic`, `sources`; config; sizing; energy; finance; sensitivity; reliability; commissioning; `derived` |
 | `hourly.json` | 16 hourly columns plus month, rounded to 4 decimals |
-| `twin.json` | halls, racks, equipment, plant display positions, relations, telemetry, notes |
+| `twin.json` | halls (with aisle plan), racks (with facing), equipment, plant display positions, relations, telemetry, notes |
 | `docs.json` | documentation index by discipline |
 | `tables.json` | FMEA, maintenance matrix, cost allowances, traceability, accommodation, control points |
 | `manifest.json` | SHA-256 of each file above |

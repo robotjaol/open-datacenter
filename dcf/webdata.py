@@ -15,7 +15,7 @@ from .controls import commission
 from .energy import annual, hourly
 from .engineering import size
 from .finance import model, sensitivity
-from .geometry import layout
+from .geometry import aisles, layout
 from .reliability import evaluate
 from .site import rank
 
@@ -150,19 +150,21 @@ def build_twin(c: dict, sizing: dict, rack_rows: list[dict], equipment: list[dic
         by_system.setdefault((item["system"], item["path"]), []).append(item["asset_id"])
     path_ids = {p: sum((by_system.get((k, p), []) for k in ("UPS", "TX", "GEN")), []) for p in ("A", "B")}
     chillers = by_system.get(("CHL", "SHARED"), [])
+    facing, aisle_list = aisles(c)
     halls = []
     for room in rooms:
         count = sum(1 for r in rack_rows if r["hall_id"] == room["id"])
         halls.append({**room, "rack_count": count, "design_kw": sum(r["design_kw"] for r in rack_rows
                                                                      if r["hall_id"] == room["id"]),
-                      "cdu_ids": by_system.get(("CDU", room["id"]), [])})
+                      "cdu_ids": by_system.get(("CDU", room["id"]), []),
+                      "aisles": [a for a in aisle_list if a["hall_id"] == room["id"]]})
     lookup = {}
     for record in telemetry:
         lookup.setdefault(record["asset_id"], []).append(record)
     racks = []
     for rack in rack_rows:
         liquid = rack["design_kw"] * c["liquid_fraction"]
-        racks.append({**rack, "liquid_design_kw": liquid, "air_design_kw": rack["design_kw"] - liquid,
+        racks.append({**rack, "facing": facing[rack["asset_id"]], "liquid_design_kw": liquid, "air_design_kw": rack["design_kw"] - liquid,
                       "relations": {"path_a_equipment": path_ids["A"], "path_b_equipment": path_ids["B"],
                                     "cdu_ids": by_system.get(("CDU", rack["hall_id"]), []),
                                     "chiller_ids": chillers,
@@ -177,7 +179,9 @@ def build_twin(c: dict, sizing: dict, rack_rows: list[dict], equipment: list[dic
     return {"halls": halls, "racks": racks, "equipment": items,
             "notes": ["Rack positions come from dcf.geometry. Plant positions are schematic display "
                       "positions only; the source geometry does not place plant.",
-                      "Rack telemetry is a synthetic offline example. Equipment has no telemetry."]}
+                      "Rack telemetry is a synthetic offline example. Equipment has no telemetry.",
+                      "Rack facing and hot or cold aisles are a concept assumption: rows alternate so fronts meet at "
+                      "cold aisles and backs at hot aisles. Rack positions are unchanged."]}
 
 
 # ---------- derived values and tables ----------

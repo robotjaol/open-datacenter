@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import type { Equipment, Twin } from "./types";
+import type { Equipment, Rack, Twin } from "./types";
 import { buildRack } from "./models/rack";
+import { buildContainment } from "./models/containment";
 import { buildTray } from "./models/tray";
 import { buildPlant } from "./models/plant";
 import { availableModels, loadExternal } from "./models/external";
@@ -12,7 +13,7 @@ interface RackSet { ids: string[]; center: THREE.Vector3; simple: THREE.Instance
 const DETAIL_DISTANCE = 70;
 
 export type ColorMode = "hall" | "telemetry" | "neutral";
-export interface Layers { halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
+export interface Layers { aisles: boolean; halls: boolean; racks: boolean; electrical: boolean; cooling: boolean; relations: boolean; labels: boolean }
 export interface Picked { kind: "rack" | "equipment" | "hall"; id: string }
 
 const SYSTEM_COLOR: Record<string, number> = { UPS: 0x7c9cff, TX: 0xf2b84b, GEN: 0xe8829f, CHL: 0x38bdf8, CDU: 0x6fcf97 };
@@ -34,6 +35,12 @@ function label(text: string): THREE.Sprite {
   return sprite;
 }
 
+// racks face +z in the model; rows that face -y are turned half a revolution
+function placeRack(m: THREE.Matrix4, r: Rack) {
+  if (r.facing === "-y") m.makeRotationY(Math.PI); else m.identity();
+  m.setPosition(r.x + r.width / 2, 0, r.y + r.depth / 2);
+}
+
 export class TwinScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -51,6 +58,7 @@ export class TwinScene {
   private labelGroup = new THREE.Group();
   private lines = new THREE.Group();
   private trays = new THREE.Group();
+  private aisleGroup = new THREE.Group();
   private casters: THREE.Object3D[] = [];
   private shadowDirty = true;
   private raycaster = new THREE.Raycaster();
@@ -90,10 +98,11 @@ export class TwinScene {
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshBasicMaterial({ color: 0x0d1117 }));
     ground.rotation.x = -Math.PI / 2; ground.position.set(this.center.x, -0.02, this.center.z); this.scene.add(ground);
     const grid = new THREE.GridHelper(200, 40, 0x26303b, 0x171d25); grid.position.set(this.center.x, 0, this.center.z); this.scene.add(grid);
-    this.scene.add(this.hallGroup, this.labelGroup, this.lines, this.trays);
+    this.scene.add(this.hallGroup, this.labelGroup, this.lines, this.trays, this.aisleGroup);
     this.buildHalls();
     this.buildRacks();
     this.buildTrays();
+    this.buildAisles();
     this.buildEquipment();
     this.setColorMode("hall");
     this.resize = new ResizeObserver(() => this.fit());
@@ -162,19 +171,38 @@ export class TwinScene {
       const set: RackSet = { ids: racks.map((r) => r.asset_id), center: new THREE.Vector3(hall.x + hall.width / 2, 1, hall.y + hall.depth / 2),
         simple: mk(geo.simple, simpleMat), body: mk(geo.body, bodyMat), accent: mk(geo.accent, accentMat) };
       racks.forEach((r, i) => {
-        m.makeTranslation(r.x + r.width / 2, 0, r.y + r.depth / 2);
+        placeRack(m, r);
         set.simple.setMatrixAt(i, m); set.body.setMatrixAt(i, m); set.accent.setMatrixAt(i, m);
         this.rackLoc.set(r.asset_id, { set, idx: i });
       });
       // invisible low poly caster keeps shadows stable while the detail level changes
       const caster = new THREE.InstancedMesh(geo.simple, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }), n);
-      racks.forEach((r, i) => { m.makeTranslation(r.x + r.width / 2, 0, r.y + r.depth / 2); caster.setMatrixAt(i, m); });
+      racks.forEach((r, i) => { placeRack(m, r); caster.setMatrixAt(i, m); });
       caster.castShadow = true; caster.raycast = () => {}; this.casters.push(caster); this.scene.add(caster);
       set.body.receiveShadow = true; set.simple.receiveShadow = true;
       for (const im of [set.simple, set.body, set.accent]) { im.computeBoundingSphere(); im.frustumCulled = true; }
       set.body.visible = false; set.accent.visible = false;
       this.scene.add(set.simple, set.body, set.accent);
       this.rackSets.push(set);
+    }
+  }
+
+  // hot aisles get a glazed roof and end doors, cold aisles a blue floor marker; both come from the Python aisle plan
+  private buildAisles() {
+    const frameMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.7 });
+    const glassMat = new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.28, roughness: 0.1, metalness: 0.2, depthWrite: false });
+    const cold = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    const hot = new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    const none = () => {};
+    for (const hall of this.twin.halls) for (const a of hall.aisles ?? []) {
+      const cx = a.x + a.width / 2, cz = a.y + a.depth / 2;
+      const tint = new THREE.Mesh(new THREE.PlaneGeometry(a.width, a.depth), a.kind === "hot" ? hot : cold);
+      tint.rotation.x = -Math.PI / 2; tint.position.set(cx, 0.21, cz); tint.raycast = none; this.aisleGroup.add(tint);
+      if (!a.contained) continue;
+      const { frame, glass } = buildContainment(a.width, a.depth, 2.2);
+      const fm = new THREE.Mesh(frame, frameMat), gm = new THREE.Mesh(glass, glassMat);
+      for (const o of [fm, gm]) { o.position.set(cx, 0.2, cz); o.raycast = none; this.aisleGroup.add(o); }
+      fm.castShadow = true; gm.renderOrder = 2;
     }
   }
 
@@ -243,7 +271,7 @@ export class TwinScene {
 
   setLayers(l: Layers) {
     this.hallGroup.visible = l.halls;
-    this.racksVisible = l.racks; this.trays.visible = l.racks; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
+    this.aisleGroup.visible = l.aisles; this.racksVisible = l.racks; this.trays.visible = l.racks; for (const c of this.casters) c.visible = l.racks; this.shadowDirty = true;
     this.updateLod();
     this.labelGroup.visible = l.labels;
     this.lines.visible = l.relations;
@@ -352,7 +380,7 @@ export class TwinScene {
     let off: THREE.Vector3;
     if (p.kind === "rack") {
       const r = this.twin.racks.find((x) => x.asset_id === p.id)!;
-      c.set(r.x + r.width / 2, 1.2, r.y + r.depth / 2); off = new THREE.Vector3(0.35, 0.15, 1.65);       // inside the 1.8 m cold aisle, facing the front
+      c.set(r.x + r.width / 2, 1.2, r.y + r.depth / 2); off = new THREE.Vector3(0.35, 0.15, r.facing === "-y" ? -1.65 : 1.65);       // inside the 1.8 m cold aisle, facing the front
     } else if (p.kind === "hall") {
       const h = this.twin.halls.find((x) => x.id === p.id)!;
       c.set(h.x + h.width / 2, 2, h.y + h.depth / 2); off = new THREE.Vector3(18, 26, 32);

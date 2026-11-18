@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildRack, RACK_SIZE, RACK_UNITS } from "../src/models/rack";
 import { buildPlant } from "../src/models/plant";
 import { buildTray } from "../src/models/tray";
+import { buildContainment } from "../src/models/containment";
 
 const tris = (g: BufferGeometry) => g.getAttribute("position").count / 3;
 
@@ -55,4 +56,21 @@ describe("generic cable tray", () => {
     expect(tris(tray)).toBeLessThan(12_000);
     expect(tray.hasAttribute("color")).toBe(true);
   });
+});
+
+describe("generic hot aisle containment", () => {
+  const c = buildContainment(12, 1.8, 2.2);
+  it("covers the aisle plus end doors and stays at rack height", () => {
+    const b = c.frame.boundingBox!;
+    expect(b.max.x - b.min.x).toBeGreaterThan(12);
+    expect(b.max.x - b.min.x).toBeLessThan(12.3);
+    expect(b.max.z - b.min.z).toBeLessThan(1.85);
+    expect(b.max.y).toBeGreaterThan(2.2);
+    expect(b.max.y).toBeLessThan(2.4);
+  });
+  it("glass is a separate geometry so it can be transparent", () => {
+    expect(tris(c.glass)).toBeGreaterThan(0);
+    expect(c.glass.hasAttribute("color")).toBe(true);
+  });
+  it("is light", () => expect(tris(c.frame) + tris(c.glass)).toBeLessThan(5_000));
 });

@@ -19,3 +19,4 @@ Remote CI passes,.github/workflows/ci.yml,not run,not verified
 3D models fit their display footprints,web/src/models/rack.ts and plant.ts,bounding boxes within footprint plus tolerance,verified by web/tests/models.test.ts
 NVIDIA DSX sample data is not for production use,https://catalog.ngc.nvidia.com/orgs/nvidia/omniverse/resources/dsx_dataset/-,licence stated on the NGC page (NVIDIA Sample Data License for Evaluation),read from the source on 2026-11-18; no assets copied into this repository
 Cable trays are schematic and not source data,web/src/models/tray.ts,no cable routing in dcf.geometry,verified by web/tests/models.test.ts for size only
+Rack facing and hot or cold aisles are a concept assumption,dcf/geometry.py aisles(),rows alternate so fronts meet at cold aisles,verified by tests/test_webdata.py (facing matches aisle kind; racks do not move)

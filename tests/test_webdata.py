@@ -73,6 +73,31 @@ class WebData(unittest.TestCase):
             self.assertEqual(item["display_position"]["placement"], "schematic")
             self.assertTrue(set(item["serves_halls"]) <= halls)
 
+    def test_aisles_follow_rack_facing(self):
+        twin = self.live["twin"]
+        by_id = {r["asset_id"]: r for r in twin["racks"]}
+        for hall in twin["halls"]:
+            self.assertTrue(hall["aisles"])
+            for aisle in hall["aisles"]:
+                top = [r for r in twin["racks"] if r["hall_id"] == hall["id"]
+                       and abs(r["y"] + r["depth"] - aisle["y"]) < 1e-9]
+                bottom = [r for r in twin["racks"] if r["hall_id"] == hall["id"]
+                          and abs(r["y"] - (aisle["y"] + aisle["depth"])) < 1e-9]
+                self.assertTrue(top and bottom)
+                want = ("+y", "-y") if aisle["kind"] == "cold" else ("-y", "+y")
+                self.assertEqual({r["facing"] for r in top}, {want[0]})
+                self.assertEqual({r["facing"] for r in bottom}, {want[1]})
+                self.assertEqual(aisle["contained"], aisle["kind"] == "hot")
+                self.assertAlmostEqual(aisle["depth"], 1.8)
+        self.assertEqual(len(by_id), 200)
+
+    def test_aisle_plan_does_not_move_racks(self):
+        from dcf.geometry import layout
+        _, racks = layout(self.c)
+        for rack in self.live["twin"]["racks"]:
+            src = next(r for r in racks if r["asset_id"] == rack["asset_id"])
+            self.assertEqual((rack["x"], rack["y"]), (src["x"], src["y"]))
+
     def test_telemetry_is_marked_synthetic(self):
         racks = self.ref["twin"]["racks"]
         with_data = [r for r in racks if r["telemetry"]]

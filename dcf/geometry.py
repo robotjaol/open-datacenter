@@ -23,6 +23,32 @@ def layout(c: dict) -> tuple[list[dict], list[dict]]:
                           "design_kw": c["rack_kw"], "power_a": "LV-A", "power_b": "LV-B"})
     return rooms, racks
 
+def aisles(c: dict) -> tuple[dict, list[dict]]:
+    """Concept aisle plan: rows alternate facing so fronts meet at cold aisles and backs at hot aisles.
+
+    This is a layout assumption added for the digital twin. It does not move any rack, so the
+    committed DXF, SVG and USD files stay valid. Returns facing by asset id and the aisle rectangles.
+    """
+    cols = min(10, c["racks_per_hall"])
+    rows = math.ceil(c["racks_per_hall"]/cols)
+    rooms, racks = layout(c)
+    facing = {}
+    for rack in racks:
+        row = int(rack["asset_id"].rsplit("R", 1)[1]) - 1
+        facing[rack["asset_id"]] = "+y" if (row//cols) % 2 == 0 else "-y"
+    out = []
+    for room in rooms:
+        for r in range(rows-1):
+            n = min(cols, c["racks_per_hall"]-r*cols, c["racks_per_hall"]-(r+1)*cols)
+            if n <= 0:
+                continue
+            kind = "cold" if r % 2 == 0 else "hot"
+            out.append({"id": f"{room['id']}-{kind[0].upper()}{r+1}", "hall_id": room["id"], "kind": kind,
+                        "x": room["x"]+4, "y": room["y"]+4+r*3+1.2, "width": n*1.2, "depth": 1.8,
+                        "contained": kind == "hot", "basis": "concept assumption"})
+    return facing, out
+
+
 def write_geometry(c: dict, out: Path) -> list[dict]:
     rooms, racks = layout(c)
     max_x = max(r["x"]+r["width"] for r in rooms)+10

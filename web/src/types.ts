@@ -17,10 +17,11 @@ export interface Hourly {
   columns: Record<string, number[]>;
 }
 
+export interface Aisle { id: string; hall_id: string; kind: "cold" | "hot"; x: number; y: number; width: number; depth: number; contained: boolean; basis: string }
 export interface Hall { id: string; x: number; y: number; width: number; depth: number; height: number;
-  rack_count: number; design_kw: number; cdu_ids: string[] }
+  rack_count: number; design_kw: number; cdu_ids: string[]; aisles: Aisle[] }
 export interface Telemetry { timestamp: string; asset_id: string; metric: string; value: number; unit: string; quality: string; source: string }
-export interface Rack { asset_id: string; hall_id: string; x: number; y: number; width: number; depth: number; height: number;
+export interface Rack { facing: "+y" | "-y"; asset_id: string; hall_id: string; x: number; y: number; width: number; depth: number; height: number;
   design_kw: number; power_a: string; power_b: string; liquid_design_kw: number; air_design_kw: number;
   relations: { path_a_equipment: string[]; path_b_equipment: string[]; cdu_ids: string[]; chiller_ids: string[]; note: string };
   telemetry: Telemetry[] }
